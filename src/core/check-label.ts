@@ -17,5 +17,7 @@ const CHECK_LABELS: Readonly<Record<CheckId, string>> = Object.freeze({
 });
 
 export function checkLabel(checkId: string): string {
-  return (CHECK_LABELS as Readonly<Record<string, string>>)[checkId] ?? checkId;
+  return Object.hasOwn(CHECK_LABELS, checkId)
+    ? CHECK_LABELS[checkId as CheckId]
+    : checkId;
 }

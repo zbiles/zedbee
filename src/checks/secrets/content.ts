@@ -11,10 +11,12 @@ import {
 } from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
-  IGNORED_DIRECTORY_NAMES,
+  hasIgnoredDirectorySegment,
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
 import { capturedSourceRegistry } from "../../inspection/source-capture.js";
+import pLimit from "p-limit";
+import type { ChangedFile } from "../../git/change-set.js";
 
 export const MAX_SECRET_FILE_BYTES = 1024 * 1024;
 
@@ -66,15 +68,10 @@ async function readTextSource(
   registry: SnapshotRegistry,
   repositoryPath: string,
   identityPath: string,
-  required: boolean,
   binary: boolean,
 ): Promise<SecretTextSource | undefined> {
   // A selected input is not permission to widen this consumer's inventory.
-  const excluded = repositoryPath
-    .split("/")
-    .some((part) =>
-      (IGNORED_DIRECTORY_NAMES as readonly string[]).includes(part),
-    );
+  const excluded = hasIgnoredDirectorySegment(repositoryPath);
   let entry;
   try {
     entry = excluded ? undefined : registry.resolve(repositoryPath);
@@ -82,7 +79,6 @@ async function readTextSource(
     throw unsafeSecretFile(repositoryPath);
   }
   if (entry === undefined) {
-    if (!required) return undefined;
     throw new SecretContentError({
       code: "SECRET_FILE_UNSAFE",
       message: "A changed file could not be read from the required snapshot.",
@@ -128,6 +124,14 @@ async function readTextSource(
   return Object.freeze({ content, reportPath: repositoryPath, identityPath });
 }
 
+function baselinePathFor(
+  file: ChangedFile,
+  baselinePaths: ReadonlySet<string>,
+): string | undefined {
+  const path = file.previousPath ?? file.path;
+  return file.status === "added" || !baselinePaths.has(path) ? undefined : path;
+}
+
 export async function collectSecretSourcePairs(
   context: CheckRunContext,
 ): Promise<readonly SecretSourcePair[]> {
@@ -161,14 +165,9 @@ export async function collectSecretSourcePairs(
       paths.add(path);
     };
     add(context.targetInspection.snapshotRoot, file.path);
-    if (
-      file.status !== "added" &&
-      baselinePaths.has(file.previousPath ?? file.path)
-    )
-      add(
-        context.baselineInspection.snapshotRoot,
-        file.previousPath ?? file.path,
-      );
+    const baselinePath = baselinePathFor(file, baselinePaths);
+    if (baselinePath !== undefined)
+      add(context.baselineInspection.snapshotRoot, baselinePath);
   }
   const readSelected = async (
     root: string,
@@ -196,15 +195,17 @@ export async function collectSecretSourcePairs(
       }
       registry = await pending;
     }
-    return readTextSource(registry, path, identity, true, binary);
+    return readTextSource(registry, path, identity, binary);
   };
-  for (const file of changed) {
+  const readPair = async (
+    file: ChangedFile,
+  ): Promise<SecretSourcePair | undefined> => {
     const targetPath = normalizeRepositoryRelativePath(file.path);
+    const rawBaseline = baselinePathFor(file, baselinePaths);
     const baselinePath =
-      file.status === "added" ||
-      !baselinePaths.has(file.previousPath ?? file.path)
+      rawBaseline === undefined
         ? undefined
-        : normalizeRepositoryRelativePath(file.previousPath ?? file.path);
+        : normalizeRepositoryRelativePath(rawBaseline);
     const [baseline, target] = await Promise.all([
       baselinePath === undefined
         ? undefined
@@ -221,13 +222,19 @@ export async function collectSecretSourcePairs(
         targetBinaryPaths.has(targetPath),
       ),
     ]);
-    if (baseline === undefined && target === undefined) continue;
-    pairs.push(
-      Object.freeze({
-        ...(baseline === undefined ? {} : { baseline }),
-        ...(target === undefined ? {} : { target }),
-      }),
-    );
+    if (baseline === undefined && target === undefined) return undefined;
+    return Object.freeze({
+      ...(baseline === undefined ? {} : { baseline }),
+      ...(target === undefined ? {} : { target }),
+    });
+  };
+  const limit = pLimit(8);
+  const settled = await Promise.allSettled(
+    changed.map((file) => limit(() => readPair(file))),
+  );
+  for (const result of settled) {
+    if (result.status === "rejected") throw result.reason;
+    if (result.value !== undefined) pairs.push(result.value);
   }
   return Object.freeze(pairs);
 }

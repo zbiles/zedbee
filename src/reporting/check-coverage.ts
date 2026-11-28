@@ -7,7 +7,7 @@ import {
 import { comparePreviewFindings } from "./finding-priority.js";
 import { checkLabel } from "./check-label.js";
 import type { ScanReport } from "../scan/report.js";
-import { emptyChangesCopy } from "./source-identity.js";
+import { changedScopeLabel, emptyChangesCopy } from "./source-identity.js";
 
 export function checkCoverage(
   report: ScanReport,
@@ -68,9 +68,7 @@ export function allowedScanDetail(report: ScanReport): string {
   if (coverage.completed === 0) {
     if (coverage.skipped === 0)
       return `No checks ran for the selected changes. ${verdict}`;
-    const scope =
-      report.mode === "base" ? "selected committed changes" : "staged changes";
-    return `No applicable checks for the ${scope}. ${verdict}`;
+    return `No applicable checks for the ${changedScopeLabel(report.mode)}. ${verdict}`;
   }
   return `All checks passed. ${verdict}`;
 }

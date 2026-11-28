@@ -1,5 +1,12 @@
 import { createGitRepository } from "../helpers/git-repository.js";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -216,6 +223,20 @@ describe("cached CLI notification", () => {
       "pnpm add --save-dev --workspace-root zedbee@latest",
     );
   });
+  it("adds the workspace-root check flag for a Yarn 1 workspace root", async () => {
+    const { root } = await createGitRepository();
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        packageManager: "yarn@1.22.22",
+        workspaces: ["packages/*"],
+        devDependencies: { zedbee: "^0.1.0" },
+      }),
+    );
+    expect(await updateCommand(root)).toContain(
+      "yarn add --dev --ignore-workspace-root-check zedbee@latest",
+    );
+  });
 });
 
 describe("background refresh", () => {
@@ -303,6 +324,17 @@ it("keeps a delayed refresh's lease beyond the former expiration interval", asyn
   expect(readUpdateCache(path, later)?.metadata?.version).toBe("0.3.0");
 });
 
+it.skipIf(process.platform === "win32")(
+  "treats a FIFO cache path as missing instead of blocking",
+  () => {
+    const directory = join(fixture(), "zedbee");
+    mkdirSync(directory, { recursive: true });
+    const cachePath = join(directory, "update.json");
+    execFileSync("mkfifo", [cachePath]);
+    expect(readUpdateCache(cachePath, now)).toBeUndefined();
+  },
+);
+
 it("identifies nested pnpm declaration from repository root and subdirectories", async () => {
   const repo = await createGitRepository();
   await repo.write("package.json", '{"name":"root"}');
@@ -317,5 +349,30 @@ it("identifies nested pnpm declaration from repository root and subdirectories",
   );
   expect(await updateCommand(join(repo.root, "nested/src"))).toContain(
     'directory "nested": pnpm add --save-dev zedbee@latest',
+  );
+});
+
+it("recommends the deepest project, not the repository root", async () => {
+  const repo = await createGitRepository();
+  await repo.write(
+    "package.json",
+    JSON.stringify({
+      name: "root",
+      packageManager: "pnpm@10.0.0",
+      devDependencies: { zedbee: "^0.1.42" },
+      workspaces: ["a"],
+    }),
+  );
+  await repo.write(
+    "a/package.json",
+    JSON.stringify({
+      name: "a",
+      devDependencies: { zedbee: "^0.1.42" },
+    }),
+  );
+  await repo.write("pnpm-workspace.yaml", "packages: ['a']\n");
+  await repo.write("a/src/index.ts", "export {};\n");
+  expect(await updateCommand(join(repo.root, "a", "src"))).toContain(
+    'directory "a": pnpm add --save-dev zedbee@latest',
   );
 });

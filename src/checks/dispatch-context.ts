@@ -1,12 +1,12 @@
 import { changeSetFromMap } from "../git/change-set.js";
 import {
   CHECK_IDS,
-  type CheckId,
   type ResolvedCheckPolicy,
   type ResolvedCheckPolicyPatch,
   type ResolvedPolicyOverride,
   type ResolvedConfig,
 } from "../config/schema.js";
+import { isCheckId } from "../core/check-ids.js";
 import type { FilePolicyResolver } from "../config/file-policy.js";
 import {
   immutableConfigurationSnapshot,
@@ -29,8 +29,8 @@ export type DispatchContext = InspectionContext &
 export function immutablePolicy<
   T extends ResolvedCheckPolicy | ResolvedCheckPolicyPatch,
 >(checkId: string, policy: Readonly<T>): Readonly<T> {
-  return CHECK_IDS.includes(checkId as CheckId)
-    ? snapshotManagedPolicy(checkId as CheckId, policy)
+  return isCheckId(checkId)
+    ? snapshotManagedPolicy(checkId, policy)
     : immutableConfigurationSnapshot(policy);
 }
 

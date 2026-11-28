@@ -3,13 +3,14 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   lstat,
   mkdir,
-  readFile,
+  open,
   readdir,
   rename,
   unlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
+import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -29,11 +30,19 @@ import {
 } from "./dependency-inputs.js";
 
 const KEY = /^[a-f0-9]{64}$/u;
+const ENTRY_SUFFIX = ".json";
 
 const SCHEMA_VERSION = 3;
 
 function isRealDirectory(metadata: Stats): boolean {
   return metadata.isDirectory() && !metadata.isSymbolicLink();
+}
+
+/** Only this user may be able to add or replace cache entries. */
+function isPrivateDirectory(metadata: Stats): boolean {
+  if (!isRealDirectory(metadata)) return false;
+  if (process.platform === "win32" || process.getuid === undefined) return true;
+  return metadata.uid === process.getuid() && (metadata.mode & 0o022) === 0;
 }
 
 function isRegularFile(metadata: Stats): boolean {
@@ -128,7 +137,11 @@ export function sanitizeCacheableObservationSet(
     target: sanitizeCheckTarget(input.target as CheckTarget),
     baselineObservations: Object.freeze(baselineObservations),
     targetObservations: Object.freeze(targetObservations),
-    ...(input.comparisonContext === undefined ? {} : { comparisonContext: sanitizeComparisonContext(input.comparisonContext) }),
+    ...(input.comparisonContext === undefined
+      ? {}
+      : {
+          comparisonContext: sanitizeComparisonContext(input.comparisonContext),
+        }),
     ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
     ...(input.projectDelta === undefined
       ? {}
@@ -179,29 +192,45 @@ export class ObservationCacheStore implements ObservationCache {
 
   private path(key: string): string {
     if (!KEY.test(key)) throw new TypeError("Invalid observation cache key");
-    return join(this.root, `${key}.json`);
+    return join(this.root, `${key}${ENTRY_SUFFIX}`);
   }
 
   private async ensureRoot(): Promise<void> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const metadata = await lstat(this.root);
-    if (!isRealDirectory(metadata)) {
+    if (!isPrivateDirectory(metadata)) {
       throw new TypeError("Invalid observation cache root");
+    }
+  }
+
+  private async readEntry(path: string): Promise<string | undefined> {
+    const handle = await open(
+      path,
+      constants.O_RDONLY |
+        (constants.O_NONBLOCK ?? 0) |
+        (constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const metadata = await handle.stat();
+      if (!metadata.isFile() || metadata.size > this.maxBytes) return undefined;
+      const serialized = await handle.readFile("utf8");
+      return Buffer.byteLength(serialized) > this.maxBytes
+        ? undefined
+        : serialized;
+    } finally {
+      await handle.close();
     }
   }
 
   async get(key: string): Promise<CheckObservationSet | undefined> {
     try {
       const rootMetadata = await lstat(this.root);
-      if (!isRealDirectory(rootMetadata)) {
+      if (!isPrivateDirectory(rootMetadata)) {
         return undefined;
       }
       const path = this.path(key);
-      const metadata = await lstat(path);
-      if (!isRegularFile(metadata) || metadata.size > this.maxBytes) {
-        return undefined;
-      }
-      const serialized = await readFile(path, "utf8");
+      const serialized = await this.readEntry(path);
+      if (serialized === undefined) return undefined;
       const envelope = JSON.parse(serialized) as Record<string, unknown>;
       const payloadText = JSON.stringify(envelope.payload);
       if (
@@ -227,11 +256,7 @@ export class ObservationCacheStore implements ObservationCache {
     try {
       const payload = sanitizeCacheableObservationSet(value);
       const payloadText = JSON.stringify(payload);
-      const serialized = `${JSON.stringify({
-        schemaVersion: SCHEMA_VERSION,
-        integrity: digest(payloadText),
-        payload,
-      })}\n`;
+      const serialized = `{"schemaVersion":${JSON.stringify(SCHEMA_VERSION)},"integrity":${JSON.stringify(digest(payloadText))},"payload":${payloadText}}\n`;
       if (Buffer.byteLength(serialized) > this.maxBytes) return;
       await this.ensureRoot();
       const destination = this.path(key);
@@ -253,8 +278,10 @@ export class ObservationCacheStore implements ObservationCache {
   }
 
   private async prune(): Promise<void> {
-    const names = (await readdir(this.root)).filter((name) =>
-      /^[a-f0-9]{64}\.json$/u.test(name),
+    const names = (await readdir(this.root)).filter(
+      (name) =>
+        name.endsWith(ENTRY_SUFFIX) &&
+        KEY.test(name.slice(0, -ENTRY_SUFFIX.length)),
     );
     const entries = (
       await Promise.all(

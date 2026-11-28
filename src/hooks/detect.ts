@@ -1,5 +1,5 @@
 import { resolveRawGitHookPath } from "./raw-hook-path.js";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ScanHookName } from "./command.js";
 import { GitClient } from "../git/client.js";
@@ -32,6 +32,8 @@ import {
   TRACKED_INSTALL_SCRIPT,
   trackedRuntimeChanges,
   validateLocalHookMigration,
+  readRegularHookFile,
+  type HookFile,
 } from "./install.js";
 
 export interface DetectedHookIntegration {
@@ -105,10 +107,7 @@ async function managerActivation(
   return pendingManager(hook);
 }
 
-interface ExistingFile {
-  readonly contents: string;
-  readonly mode: number;
-}
+type ExistingFile = HookFile;
 
 async function existingFile(
   root: string,
@@ -120,16 +119,7 @@ async function existingFile(
 async function existingAbsoluteFile(
   path: string,
 ): Promise<ExistingFile | undefined> {
-  try {
-    const state = await lstat(path);
-    if (state.isSymbolicLink() || !state.isFile()) {
-      throw new Error("Zedbee refused an unsafe hook target.");
-    }
-    return { contents: await readFile(path, "utf8"), mode: state.mode & 0o777 };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
+  return readRegularHookFile(path, "Zedbee refused an unsafe hook target.");
 }
 
 export function rawGitHookPath(

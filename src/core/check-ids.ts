@@ -14,3 +14,7 @@ export const CHECK_IDS = [
   "vulnerabilities",
 ] as const;
 export type CheckId = (typeof CHECK_IDS)[number];
+
+export function isCheckId(value: string): value is CheckId {
+  return (CHECK_IDS as readonly string[]).includes(value);
+}

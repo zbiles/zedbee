@@ -5,10 +5,11 @@ import type {
   Observation,
   SourceLocation,
 } from "../core/types.js";
+import { isCanonicalText } from "../core/canonical-text.js";
 import {
   findingIdentityFromSnapshot,
+  fingerprintIdentity,
   fingerprintSnapshot,
-  isCanonicalSyntaxText,
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";
@@ -50,7 +51,7 @@ function comparisonFingerprint(observation: Observation): string {
 }
 
 function canonicalEntityIdentity(identity: string): string {
-  if (!isCanonicalSyntaxText(identity)) {
+  if (!isCanonicalText(identity)) {
     throw new TypeError("Expected a canonical changed entity identity");
   }
   return identity;
@@ -61,8 +62,11 @@ export { compareCodeUnits } from "../core/compare.js";
 function normalizeTarget(observation: Observation): NormalizedTarget {
   const snapshot = normalizeObservation(observation);
   const identity = findingIdentityFromSnapshot(snapshot);
-  const fingerprint = fingerprintSnapshot(snapshot);
-  const pairedFingerprint = comparisonFingerprint(snapshot);
+  const fingerprint = fingerprintIdentity(identity);
+  const pairedFingerprint =
+    snapshot.comparisonIdentity === undefined
+      ? fingerprint
+      : comparisonFingerprint(snapshot);
   const location = snapshot.location;
   const sortKey = JSON.stringify([
     fingerprint,

@@ -1,9 +1,11 @@
 import { launchBackgroundNode } from "../runtime/background-node.js";
-import { relative, isAbsolute, sep } from "node:path";
+import { relative, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { GitClient } from "../git/client.js";
+import { isContainedPath } from "../inspection/paths.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
+import { owningWorkspace } from "../inspection/workspace-owner.js";
 import { projectInstallManager } from "../init/install-project.js";
 import { terminalText } from "../renderers/terminal-style.js";
 import {
@@ -68,6 +70,19 @@ const COMMANDS = {
   bun: "bun add --dev zedbee@latest",
 } as const;
 
+function installCommand(
+  manager: keyof typeof COMMANDS,
+  classicYarn: boolean,
+  workspaceRoot: boolean,
+): string {
+  if (!workspaceRoot) return COMMANDS[manager];
+  if (manager === "pnpm")
+    return "pnpm add --save-dev --workspace-root zedbee@latest";
+  if (manager === "yarn" && classicYarn)
+    return "yarn add --dev --ignore-workspace-root-check zedbee@latest";
+  return COMMANDS[manager];
+}
+
 /** Resolve the declared dependency's owner only when an update is displayed. */
 export async function updateCommand(cwd: string): Promise<string> {
   try {
@@ -79,22 +94,12 @@ export async function updateCommand(cwd: string): Promise<string> {
     const declared = projects.filter(({ manifest }) =>
       manifest.dependencyNames.has("zedbee"),
     );
-    const location =
-      relative(root, await realpath(cwd))
-        .split(sep)
-        .join("/") || ".";
-    if (isAbsolute(location) || location === ".." || location.startsWith("../"))
-      throw new Error("outside checkout");
-    const ancestors = declared
-      .filter(
-        ({ relativeRoot }) =>
-          relativeRoot === "." ||
-          location === relativeRoot ||
-          location.startsWith(`${relativeRoot}/`),
-      )
-      .sort((a, b) => b.relativeRoot.length - a.relativeRoot.length);
+    const current = await realpath(cwd);
+    if (!isContainedPath(root, current)) throw new Error("outside checkout");
+    const location = relative(root, current).split(sep).join("/") || ".";
     const project =
-      ancestors[0] ?? (declared.length === 1 ? declared[0] : undefined);
+      owningWorkspace(declared, `${location}/`) ??
+      (declared.length === 1 ? declared[0] : undefined);
     if (project === undefined) {
       return declared.length === 0
         ? "Update your existing installation of zedbee using the package manager that installed it (no declared project dependency found)."
@@ -103,15 +108,12 @@ export async function updateCommand(cwd: string): Promise<string> {
     const paths = new Set(
       registry.entries().map(({ repositoryPath }) => repositoryPath),
     );
-    const { manager, workspaceRoot } = projectInstallManager(
+    const { manager, classicYarn, workspaceRoot } = projectInstallManager(
       project,
       projects,
       paths,
     );
-    const command =
-      manager === "pnpm" && workspaceRoot
-        ? "pnpm add --save-dev --workspace-root zedbee@latest"
-        : COMMANDS[manager];
+    const command = installCommand(manager, classicYarn, workspaceRoot);
     return `In repository directory ${JSON.stringify(project.relativeRoot)}: ${command}`;
   } catch {
     return "Update your existing installation of zedbee using the package manager that installed it (project owner unavailable).";

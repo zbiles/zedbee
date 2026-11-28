@@ -12,6 +12,10 @@ import {
 } from "../../inspection/read-json.js";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
+import {
+  URL_SCHEME,
+  WINDOWS_PATH as WINDOWS_DRIVE_PATH,
+} from "../project/import-specifier.js";
 import { containedRelativeRequest } from "./config-requests.js";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
 import {
@@ -42,8 +46,6 @@ export interface SnapshotProgram {
   readonly writes: readonly string[];
 }
 
-const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
-
 function directoryKey(path: string): string {
   // Match path.relative's case-insensitive containment on Windows.
   return sep === "\\" ? path.toLowerCase() : path;
@@ -65,17 +67,15 @@ function isBareSpecifier(specifier: string): boolean {
     !specifier.startsWith(".") &&
     !specifier.startsWith("/") &&
     !WINDOWS_DRIVE_PATH.test(specifier) &&
-    !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier)
+    !URL_SCHEME.test(specifier)
   );
 }
 
 function validateProjectSpecifier(sourcePath: string, specifier: string): void {
   if (isBareSpecifier(specifier)) return;
   if (
-    containedRelativeRequest(
-      normalizeRepositoryPath(sourcePath),
-      specifier,
-    ) === undefined
+    containedRelativeRequest(normalizeRepositoryPath(sourcePath), specifier) ===
+    undefined
   ) {
     throw new TypeError("Unsafe TypeScript module path");
   }

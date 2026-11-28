@@ -7,12 +7,17 @@ import { parseLockfileInventory } from "../../../../src/checks/vulnerabilities/i
 import { inspectRepository } from "../../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../../inspection/fixture.js";
 
-const root = fileURLToPath(new URL("../../../fixtures/lockfiles/bun/", import.meta.url));
+const root = fileURLToPath(
+  new URL("../../../fixtures/lockfiles/bun/", import.meta.url),
+);
 const fixture = (name: string) => readFile(`${root}${name}`, "utf8");
 
 describe("parseBunLockfile", () => {
   it("parses Bun 1.2 JSONC package tuples and excludes workspace locators", async () => {
-    const records = parseBunLockfile(await fixture("bun-v1.2.lock"), "bun.lock");
+    const records = parseBunLockfile(
+      await fixture("bun-v1.2.lock"),
+      "bun.lock",
+    );
     expect(records).toMatchObject([
       { name: "@scope/actual", version: "4.2.0" },
       { name: "@scope/direct", version: "3.1.0" },
@@ -23,7 +28,9 @@ describe("parseBunLockfile", () => {
   });
 
   it("rejects unknown text versions and legacy binary lockfiles actionably", async () => {
-    expect(() => parseBunLockfile('{"lockfileVersion":2,"packages":{}}', "bun.lock")).toThrowError(
+    expect(() =>
+      parseBunLockfile('{"lockfileVersion":2,"packages":{}}', "bun.lock"),
+    ).toThrowError(
       expect.objectContaining({ code: "LOCKFILE_VERSION_UNSUPPORTED" }),
     );
 
@@ -31,9 +38,12 @@ describe("parseBunLockfile", () => {
     await repository.writeJson("package.json", { packageManager: "bun@1.1.0" });
     await repository.write("bun.lockb", await fixture("bun.lockb"));
     const inspection = await inspectRepository(repository.root);
-    await expect(parseLockfileInventory(inspection, "bun.lockb")).rejects.toMatchObject({
+    await expect(
+      parseLockfileInventory(inspection, "bun.lockb"),
+    ).rejects.toMatchObject({
       code: "LOCKFILE_UNSUPPORTED_BINARY",
-      remediation: "Run bun install --save-text-lockfile --frozen-lockfile --lockfile-only, then remove bun.lockb.",
+      remediation:
+        "Run bun install --save-text-lockfile --frozen-lockfile --lockfile-only, then remove bun.lockb.",
     });
   });
 
@@ -53,19 +63,47 @@ describe("parseBunLockfile", () => {
       "}",
     ].join("\r\n");
     expect(parseBunLockfile(contents, "bun.lock")).toMatchObject([
-      { name: "@scope/actual", version: "1.0.0", line: 7, dependencyPath: ["alias"] },
-      { name: "child", version: "2.0.0", line: 8, dependencyPath: ["@scope/direct", "child"] },
+      {
+        name: "@scope/actual",
+        version: "1.0.0",
+        line: 7,
+        dependencyPath: ["alias"],
+      },
+      {
+        name: "child",
+        version: "2.0.0",
+        line: 8,
+        dependencyPath: ["@scope/direct", "child"],
+      },
       { name: "child", version: "4.0.0", line: 9, dependencyPath: ["child"] },
     ]);
   });
 
+  it("rejects a bare scope package key", () => {
+    expect(() =>
+      parseBunLockfile(
+        '{"lockfileVersion":1,"packages":{"@scope":["@scope/pkg@1.0.0"]}}',
+        "bun.lock",
+      ),
+    ).toThrowError(expect.objectContaining({ code: "LOCKFILE_INVALID" }));
+  });
+
   it("bounds records before validating the remaining tuples", () => {
-    const entries = Array.from({ length: MAX_DEPENDENCY_RECORDS + 1 }, (_, index) =>
-      `"pkg-${index}":["actual@1.0.0"]`,
+    const entries = Array.from(
+      { length: MAX_DEPENDENCY_RECORDS + 1 },
+      (_, index) => `"pkg-${index}":["actual@1.0.0"]`,
     );
-    const supported = '{"lockfileVersion":1,"packages":{' + entries.slice(0, MAX_DEPENDENCY_RECORDS).join(",") + ',"local":["local@workspace:."],"linked":["linked@link:../linked"]}}';
-    expect(parseBunLockfile(supported, "bun.lock")).toHaveLength(MAX_DEPENDENCY_RECORDS);
-    const contents = '{"lockfileVersion":1,"packages":{' + entries.join(",") + ',"invalid":[]}}';
+    const supported =
+      '{"lockfileVersion":1,"packages":{' +
+      entries.slice(0, MAX_DEPENDENCY_RECORDS).join(",") +
+      ',"local":["local@workspace:."],"linked":["linked@link:../linked"]}}';
+    expect(parseBunLockfile(supported, "bun.lock")).toHaveLength(
+      MAX_DEPENDENCY_RECORDS,
+    );
+    const contents =
+      '{"lockfileVersion":1,"packages":{' +
+      entries.join(",") +
+      ',"invalid":[]}}';
     expect(() => parseBunLockfile(contents, "bun.lock")).toThrowError(
       expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }),
     );

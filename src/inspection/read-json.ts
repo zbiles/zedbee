@@ -129,6 +129,41 @@ export async function openWithoutFollowing(
   }
 }
 
+async function assertAncestorsUnchanged(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+): Promise<void> {
+  const components = normalizeRepositoryPath(repositoryPath).split("/");
+  const ancestors = [
+    ".",
+    ...components.map((_, index) => components.slice(0, index + 1).join("/")),
+  ];
+  const checks = await Promise.allSettled(
+    ancestors.map(async (ancestor) => {
+      const registeredAncestor = registry.resolve(ancestor);
+      if (registeredAncestor === undefined) {
+        throw unsafePath();
+      }
+      const currentIdentity = await lstat(
+        ancestor === "."
+          ? registry.snapshotRoot
+          : resolve(registry.snapshotRoot, ancestor),
+        { bigint: true },
+      );
+      if (
+        !identitiesMatch(currentIdentity, registeredAncestor.lexicalIdentity)
+      ) {
+        throw unsafePath();
+      }
+    }),
+  );
+  for (const check of checks) {
+    if (check.status === "rejected") {
+      throw check.reason;
+    }
+  }
+}
+
 async function withValidatedContainedFile<T>(
   registry: SnapshotRegistry,
   repositoryPath: string,
@@ -162,26 +197,7 @@ async function withValidatedContainedFile<T>(
     ) {
       throw unsafePath();
     }
-    const components = normalizeRepositoryPath(repositoryPath).split("/");
-    const ancestors = [
-      ".",
-      ...components.map((_, index) => components.slice(0, index + 1).join("/")),
-    ];
-    for (const ancestor of ancestors) {
-      const registeredAncestor = registry.resolve(ancestor);
-      if (registeredAncestor === undefined) throw unsafePath();
-      const currentIdentity = await lstat(
-        ancestor === "."
-          ? registry.snapshotRoot
-          : resolve(registry.snapshotRoot, ancestor),
-        { bigint: true },
-      );
-      if (
-        !identitiesMatch(currentIdentity, registeredAncestor.lexicalIdentity)
-      ) {
-        throw unsafePath();
-      }
-    }
+    await assertAncestorsUnchanged(registry, repositoryPath);
     const currentCanonicalPath = await realpath(
       resolve(registry.snapshotRoot, repositoryPath),
     );
@@ -283,6 +299,21 @@ export async function readContainedBytes(
   );
 }
 
+async function decodeUtf8Chunks(
+  handle: FileHandle,
+  consume: (text: string) => void,
+  finished: () => boolean,
+): Promise<void> {
+  const decoder = new StringDecoder("utf8");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  while (!finished()) {
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    consume(decoder.write(buffer.subarray(0, bytesRead)));
+  }
+  if (!finished()) consume(decoder.end());
+}
+
 export async function readContainedLines(
   registry: SnapshotRegistry,
   repositoryPath: string,
@@ -311,7 +342,6 @@ export async function readContainedLines(
     options,
     async (handle) => {
       const result = new Map<number, string>();
-      const decoder = new StringDecoder("utf8");
       let line = 1;
       let retained: string[] = [];
       let retainedCodePoints = 0;
@@ -355,17 +385,9 @@ export async function readContainedLines(
         }
       };
 
-      while (!finished) {
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        consume(decoder.write(buffer.subarray(0, bytesRead)));
-      }
-      if (!finished) {
-        consume(decoder.end());
-        if (!finished && requested.has(line)) {
-          result.set(line, retained.join(""));
-        }
+      await decodeUtf8Chunks(handle, consume, () => finished);
+      if (!finished && requested.has(line)) {
+        result.set(line, retained.join(""));
       }
       return result;
     },
@@ -392,7 +414,6 @@ export async function digestContainedLineRange(
     {},
     async (handle) => {
       const hash = createHash("sha256");
-      const decoder = new StringDecoder("utf8");
       let line = 1;
       let skipLineFeed = false;
       let finished = false;
@@ -422,16 +443,23 @@ export async function digestContainedLineRange(
         }
       };
 
-      while (!finished) {
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        consume(decoder.write(buffer.subarray(0, bytesRead)));
-      }
-      if (!finished) consume(decoder.end());
+      await decodeUtf8Chunks(handle, consume, () => finished);
       return hash.digest("hex");
     },
   );
+}
+
+export const MAX_REPOSITORY_DATA_BYTES = 16 * 1024 * 1024;
+
+export async function readBoundedRepositoryData(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+  hooks: ContainedFileReadHooks = {},
+): Promise<string> {
+  return readContainedFile(registry, repositoryPath, {
+    ...hooks,
+    maxBytes: MAX_REPOSITORY_DATA_BYTES,
+  });
 }
 
 export async function readJsonData(
@@ -439,7 +467,11 @@ export async function readJsonData(
   repositoryPath: string,
   hooks: ContainedFileReadHooks = {},
 ): Promise<unknown> {
-  const contents = await readContainedFile(registry, repositoryPath, hooks);
+  const contents = await readBoundedRepositoryData(
+    registry,
+    repositoryPath,
+    hooks,
+  );
 
   try {
     return JSON.parse(contents) as unknown;

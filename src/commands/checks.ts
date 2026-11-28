@@ -260,13 +260,33 @@ function describeManagedEngine(
   return Object.freeze({ name: engine.name, license: engine.license, version });
 }
 
+async function readChangeSetAndSnapshots(
+  repositoryRoot: string,
+  git: GitClient,
+) {
+  const [changeSet, snapshots] = await Promise.allSettled([
+    readStagedChangeSet(git),
+    buildSnapshotPair(repositoryRoot, git),
+  ]);
+  if (changeSet.status === "rejected") {
+    // The change-set error stays the reported cause, as before.
+    if (snapshots.status === "fulfilled")
+      await snapshots.value.cleanup().catch(() => undefined);
+    throw changeSet.reason;
+  }
+  if (snapshots.status === "rejected") throw snapshots.reason;
+  return { changeSet: changeSet.value, snapshots: snapshots.value };
+}
+
 async function inspectConfiguredChecks(
   repositoryRoot: string,
   config: ResolvedConfig,
   git: GitClient,
 ): Promise<SelectedCheckApplicability> {
-  const changeSet = await readStagedChangeSet(git);
-  const snapshots = await buildSnapshotPair(repositoryRoot, git);
+  const { changeSet, snapshots } = await readChangeSetAndSnapshots(
+    repositoryRoot,
+    git,
+  );
   try {
     const [baselineInspection, targetInspection] = await settleSnapshotWork(
       () => inspectRepository(snapshots.baselineDir),
@@ -448,6 +468,14 @@ function configurationValueSnapshot(value: unknown): unknown {
   return immutableConfigurationSnapshot(value);
 }
 
+function ruleValueEntries(
+  rules: Readonly<Record<string, unknown>>,
+): [string, unknown][] {
+  return Object.keys(rules)
+    .sort(compareCodeUnits)
+    .map((key) => [`rules.${key}`, rules[key]]);
+}
+
 function policyValueEntries(
   checkId: CheckId,
   policy: ResolvedCheckPolicy,
@@ -469,9 +497,7 @@ function policyValueEntries(
     }
   }
   if ("rules" in policy && isConfigurableRuleCheckId(checkId)) {
-    for (const key of Object.keys(policy.rules).sort(compareCodeUnits)) {
-      entries.push([`rules.${key}`, policy.rules[key]]);
-    }
+    entries.push(...ruleValueEntries(policy.rules));
   }
   return entries;
 }
@@ -495,9 +521,7 @@ function patchValueEntries(
     }
   }
   if (patch.rules !== undefined && isConfigurableRuleCheckId(checkId)) {
-    for (const key of Object.keys(patch.rules).sort(compareCodeUnits)) {
-      entries.push([`rules.${key}`, patch.rules[key]]);
-    }
+    entries.push(...ruleValueEntries(patch.rules));
   }
   return entries;
 }

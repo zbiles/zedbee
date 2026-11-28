@@ -1,4 +1,5 @@
 import { displayProse } from "../core/display-text.js";
+import { changedScopeLabel } from "./source-identity.js";
 import { hookUpdateNotice } from "./hook-update-notice.js";
 
 export interface AgentGuidance {
@@ -74,9 +75,7 @@ function resolveScanNextStep(
     report.changedFileCount === 0 ||
     !report.checks.some((check) => check.status === "completed")
   ) {
-    const scope =
-      report.mode === "base" ? "selected committed changes" : "staged changes";
-    return `Review the ${scope}; no configured checks ran.`;
+    return `Review the ${changedScopeLabel(report.mode)}; no configured checks ran.`;
   }
   return "No findings require action.";
 }

@@ -7,11 +7,11 @@ import type { GitClient } from "../git/client.js";
 import { GitCommandError } from "../git/errors.js";
 import { resolveConfig } from "./profiles.js";
 import {
-  CHECK_IDS,
   configFileSchema,
   type CheckId,
   type ResolvedConfig,
 } from "./schema.js";
+import { isCheckId } from "../core/check-ids.js";
 import { managedPolicyKeys, managedSettingKeys } from "./settings-registry.js";
 
 const CONFIG_FILENAME = ".zedbeerc.jsonc";
@@ -138,15 +138,11 @@ function checkPath(
   const parts = path.split(".");
   const checksIndex = parts.lastIndexOf("checks");
   const checkId = parts[checksIndex + 1];
-  if (
-    checksIndex < 0 ||
-    checkId === undefined ||
-    !CHECK_IDS.includes(checkId as CheckId)
-  ) {
+  if (checksIndex < 0 || checkId === undefined || !isCheckId(checkId)) {
     return undefined;
   }
   return {
-    checkId: checkId as CheckId,
+    checkId,
     tail: parts.slice(checksIndex + 2),
   };
 }

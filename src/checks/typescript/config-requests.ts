@@ -1,7 +1,8 @@
 import { posix } from "node:path";
-
-const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
-const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
+import {
+  URL_SCHEME,
+  WINDOWS_PATH as WINDOWS_DRIVE_PATH,
+} from "../project/import-specifier.js";
 
 /** A tsconfig `extends` value as a list, in declaration order. */
 export function configExtensions(config: Record<string, unknown>): unknown[] {
@@ -37,9 +38,7 @@ export function containedRelativeRequest(
   ) {
     return undefined;
   }
-  const path = posix.normalize(
-    posix.join(posix.dirname(from), request),
-  );
+  const path = posix.normalize(posix.join(posix.dirname(from), request));
   if (path === ".." || path.startsWith("../")) return undefined;
   return path;
 }

@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { CHECK_IDS } from "../core/check-ids.js";
+import { compareCodeUnits } from "../core/compare.js";
 export const MAX_DIAGNOSTIC_DURATION_MS = 604_800_000;
 export const MAX_DIAGNOSTIC_COUNT = 1_000_000;
 export type PerformanceKind =
@@ -78,6 +79,13 @@ export const SCAN_WORKER_COUNTS = [1, 2, 4] as const;
 const active = new AsyncLocalStorage<ScanPerformanceRecorder>();
 const bounded = (v: number) =>
   Math.min(MAX_DIAGNOSTIC_DURATION_MS, Math.max(0, Math.round(v)));
+const CACHE_COUNTER_FIELDS: Partial<
+  Record<PerformanceKind, "cache_hits" | "cache_misses" | "cache_bypasses">
+> = {
+  cache_hit: "cache_hits",
+  cache_miss: "cache_misses",
+  cache_bypass: "cache_bypasses",
+};
 export class ScanPerformanceRecorder {
   private readonly checks = new Map<string, CheckPerformance>();
   private partial = false;
@@ -154,22 +162,16 @@ export class ScanPerformanceRecorder {
         max = `${sample.kind}_max_ms` as const;
       row[sum] = bounded((row[sum] ?? 0) + ms);
       row[max] = Math.max(row[max] ?? 0, ms);
-    } else if (
-      ["cache_hit", "cache_miss", "cache_bypass"].includes(sample.kind)
-    ) {
-      const key =
-        sample.kind === "cache_hit"
-          ? "cache_hits"
-          : sample.kind === "cache_miss"
-            ? "cache_misses"
-            : "cache_bypasses";
-      row[key] = Math.min(MAX_DIAGNOSTIC_COUNT, row[key] + 1);
+    } else {
+      const key = CACHE_COUNTER_FIELDS[sample.kind];
+      if (key !== undefined)
+        row[key] = Math.min(MAX_DIAGNOSTIC_COUNT, row[key] + 1);
     }
   }
   snapshot(): ScanPerformanceSummary {
     return {
       checks: [...this.checks.values()]
-        .sort((a, b) => a.check_id.localeCompare(b.check_id))
+        .sort((a, b) => compareCodeUnits(a.check_id, b.check_id))
         .map((x) => ({ ...x })),
       partial: this.partial,
       executionMode: this.executionMode,

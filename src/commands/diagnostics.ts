@@ -11,6 +11,12 @@ const DIAGNOSTIC_STAGES = [
   "report",
   "apply",
 ] as const;
+
+const REPORTED_CHECK_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "incomplete",
+  "skipped",
+]);
 export type DiagnosticTimings = Partial<
   Record<(typeof DIAGNOSTIC_STAGES)[number], number>
 >;
@@ -74,7 +80,7 @@ export function writeCommandDiagnostics(
       entry.checkId !== undefined &&
       managedCheckMetadata(entry.checkId) !== undefined &&
       entry.status !== undefined &&
-      ["completed", "incomplete", "skipped"].includes(entry.status) &&
+      REPORTED_CHECK_STATUSES.has(entry.status) &&
       safeDuration(entry.durationMs)
         ? [
             {
@@ -92,12 +98,12 @@ export function writeCommandDiagnostics(
           : [],
       ),
     );
+    const scan = localScanDiagnostics(options.scanDiagnostics);
+    const reportMaintenance = safeReportMaintenance(options.reportMaintenance);
     io.writeStderr(
       `ZEDBEE DIAGNOSTICS\n${JSON.stringify({
         command: options.command,
-        ...(localScanDiagnostics(options.scanDiagnostics) === undefined
-          ? {}
-          : { scan: localScanDiagnostics(options.scanDiagnostics) }),
+        ...(scan === undefined ? {} : { scan }),
         runtime: {
           node: process.versions.node,
           platform: process.platform,
@@ -111,13 +117,7 @@ export function writeCommandDiagnostics(
         ...(options.renderingFailed === undefined
           ? {}
           : { renderingFailed: options.renderingFailed }),
-        ...(safeReportMaintenance(options.reportMaintenance) === undefined
-          ? {}
-          : {
-              reportMaintenance: safeReportMaintenance(
-                options.reportMaintenance,
-              ),
-            }),
+        ...(reportMaintenance === undefined ? {} : { reportMaintenance }),
         analyzers,
         checks,
         stages,
@@ -139,9 +139,7 @@ function safeReportMaintenance(value: unknown): object | undefined {
     (v.effectiveMaxAgeMs as number) < 0 ||
     ![v.removedExpired, v.alreadyMissing].every(
       (n) =>
-        Number.isSafeInteger(n) &&
-        (n as number) >= 0 &&
-        (n as number) <= 10000,
+        Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 10000,
     ) ||
     !["unavailable", "new", "loaded", "migrated", "recovered"].includes(
       v.state as string,

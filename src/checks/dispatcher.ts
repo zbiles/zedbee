@@ -6,10 +6,10 @@ import {
 import { recordPerformance } from "../diagnostics/scan-performance.js";
 import pLimit from "p-limit";
 import {
-  CHECK_IDS,
   type CheckId,
   type ResolvedCheckPolicy,
 } from "../config/schema.js";
+import { isCheckId } from "../core/check-ids.js";
 import type {
   CheckAdapter,
   CheckExecutionResult,
@@ -62,11 +62,11 @@ function mayBeEnabled(context: InspectionContext, checkId: string): boolean {
   const policy = checkPolicy(context, checkId);
   if (policy === undefined) return false;
   if (policy.severity !== "off") return true;
-  if (!CHECK_IDS.includes(checkId as CheckId)) return false;
+  if (!isCheckId(checkId)) return false;
   return context.config.overrides.some(
     (override) =>
-      override.checks[checkId as CheckId]?.severity !== undefined &&
-      override.checks[checkId as CheckId]?.severity !== "off",
+      override.checks[checkId]?.severity !== undefined &&
+      override.checks[checkId]?.severity !== "off",
   );
 }
 
@@ -75,9 +75,8 @@ function inspectionPolicy(
   checkId: string,
 ): ResolvedCheckPolicy | undefined {
   const root = checkPolicy(context, checkId);
-  if (root === undefined || !CHECK_IDS.includes(checkId as CheckId))
-    return root;
-  return resolveInspectionPolicy(context.config, checkId as CheckId);
+  if (root === undefined || !isCheckId(checkId)) return root;
+  return resolveInspectionPolicy(context.config, checkId);
 }
 
 function compareResults(

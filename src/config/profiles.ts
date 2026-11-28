@@ -378,6 +378,12 @@ function resolveOverrides(
   file: ConfigFile | undefined,
 ): readonly ResolvedPolicyOverride[] {
   return (file?.overrides ?? []).map((override, index) => {
+    const files = Object.freeze([...override.files]);
+    const origin: SettingOrigin = Object.freeze({
+      kind: "override",
+      index,
+      files,
+    });
     const checks: Partial<Record<CheckId, ResolvedCheckPolicyPatch>> = {};
     const configurationOrigins = emptyOrigins();
     for (const checkId of CHECK_IDS) {
@@ -388,16 +394,12 @@ function resolveOverrides(
           configurationOrigins,
           checkId,
           checks[checkId],
-          Object.freeze({
-            kind: "override",
-            index,
-            files: Object.freeze([...override.files]),
-          }),
+          origin,
         );
       }
     }
     return {
-      files: Object.freeze([...override.files]),
+      files,
       ...(override.excludeFiles === undefined
         ? {}
         : { excludeFiles: Object.freeze([...override.excludeFiles]) }),

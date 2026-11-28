@@ -366,7 +366,7 @@ function validateRuleOptions(
     const ruleId =
       error instanceof Error
         ? Object.keys(rules).find((candidate) =>
-            error.message.includes(candidate),
+            error.message.includes(`"${candidate}"`),
           )
         : undefined;
     throw new ManagedRuleConfigurationError(

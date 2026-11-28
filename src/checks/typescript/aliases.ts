@@ -3,7 +3,7 @@ import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { readContainedFile } from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
-  IGNORED_DIRECTORY_NAMES,
+  hasIgnoredDirectorySegment,
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
 import type {
@@ -274,13 +274,7 @@ export async function loadSnapshotAliases(
         if (expanded.includes("\\") || /%(?:2e|2f|5c)/iu.test(expanded))
           throw new TypeError("Unsafe TypeScript alias target");
         const path = repositoryPath(resolve(base, expanded));
-        if (
-          path
-            .split("/")
-            .some((part) =>
-              (IGNORED_DIRECTORY_NAMES as readonly string[]).includes(part),
-            )
-        )
+        if (hasIgnoredDirectorySegment(path))
           throw new TypeError("TypeScript alias targets an excluded path");
         return path;
       });
@@ -367,8 +361,7 @@ function enqueueSpecifierScope(
       scopes.find(
         (scope) =>
           scope.name !== undefined &&
-          (specifier === scope.name ||
-            specifier.startsWith(`${scope.name}/`)),
+          (specifier === scope.name || specifier.startsWith(`${scope.name}/`)),
       ),
     );
   }
@@ -389,8 +382,13 @@ export async function prepareSnapshotAliases(
   inspection: RepositoryInspection,
   selected: WorkspaceInspection,
   collectCommentImports?: CommentImports,
+  options?: {
+    readonly registry?: SnapshotRegistry;
+    readonly onSpecifier?: (sourcePath: string, specifier: string) => void;
+  },
 ): Promise<PreparedSnapshotAliases> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
+  const registry =
+    options?.registry ?? (await captureSnapshotRegistry(snapshotRoot));
   const workspaces = new Map<string, SnapshotAliases>();
   const paths = new Map<string, Readonly<Record<string, readonly string[]>>>();
   const sourceFiles = new Set<string>();
@@ -427,6 +425,7 @@ export async function prepareSnapshotAliases(
         source,
         collectCommentImports,
       )) {
+        options?.onSpecifier?.(sourcePath, specifier);
         enqueueSpecifierScope(
           sourcePath,
           specifier,

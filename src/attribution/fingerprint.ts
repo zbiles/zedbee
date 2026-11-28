@@ -103,9 +103,6 @@ export function normalizeManagedAutomaticFix(
     "writes",
     "stagesChanges",
   ]);
-  if (Array.isArray(input)) {
-    throw new TypeError("Expected supported automatic fix metadata");
-  }
   const commandValue = input.command;
   if (!Array.isArray(commandValue)) {
     throw new TypeError("Expected supported automatic fix command");
@@ -136,8 +133,20 @@ export function managedAutomaticFixFor(
   return MANAGED_AUTOMATIC_FIXES[check as keyof typeof MANAGED_AUTOMATIC_FIXES];
 }
 
-function codePointLength(value: string): number {
-  return Array.from(value).length;
+function exceedsCodePoints(value: string, limit: number): boolean {
+  if (value.length <= limit) return false;
+  let count = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    count += 1;
+    if (count > limit) return true;
+    if (
+      value.charCodeAt(index) >= 0xd800 &&
+      value.charCodeAt(index) <= 0xdbff
+    ) {
+      index += 1;
+    }
+  }
+  return false;
 }
 
 function invalidPath(file: unknown): never {
@@ -149,7 +158,7 @@ export function normalizeRepositoryRelativePath(file: string): string {
     typeof file !== "string" ||
     file.length === 0 ||
     UNSAFE_PATH_CHARACTER.test(file) ||
-    codePointLength(file) > MAX_REPOSITORY_PATH_CODE_POINTS
+    exceedsCodePoints(file, MAX_REPOSITORY_PATH_CODE_POINTS)
   ) {
     return invalidPath(file);
   }
@@ -168,7 +177,7 @@ export function normalizeRepositoryRelativePath(file: string): string {
     if (
       segment === ".." ||
       UNSAFE_PATH_CHARACTER.test(segment) ||
-      codePointLength(segment) > MAX_REPOSITORY_SEGMENT_CODE_POINTS
+      exceedsCodePoints(segment, MAX_REPOSITORY_SEGMENT_CODE_POINTS)
     ) {
       return invalidPath(file);
     }
@@ -201,16 +210,6 @@ function canonicalIdentityText(value: unknown, field: string): string {
     throw new TypeError(`Expected canonical ${field}`);
   }
   return value;
-}
-
-/** Non-empty, trimmed text without C0 control characters or DEL. */
-export function isCanonicalSyntaxText(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.trim() === value &&
-    !/[\u0000-\u001f\u007f]/u.test(value)
-  );
 }
 
 function coordinate(value: unknown, field: string): number | undefined {
@@ -352,17 +351,14 @@ export function normalizeObservation(observation: Observation): Observation {
   });
 }
 
-function locationScope(location: SourceLocation): FindingIdentityScope {
-  const normalized = normalizeSourceLocation(location);
-  return { kind: "location", ...normalized };
-}
-
 export function findingIdentityFromSnapshot(
   observation: Observation,
 ): FindingIdentity {
   // Validate the report location even when the entity is the preferred identity.
-  if (observation.location !== undefined)
-    normalizeSourceLocation(observation.location);
+  const location =
+    observation.location === undefined
+      ? undefined
+      : normalizeSourceLocation(observation.location);
 
   let scope: FindingIdentityScope;
   if (observation.entity !== undefined) {
@@ -372,8 +368,8 @@ export function findingIdentityFromSnapshot(
       name: canonicalText(observation.entity.name, "entity name"),
       file: normalizeRepositoryRelativePath(observation.entity.file),
     };
-  } else if (observation.location !== undefined) {
-    scope = locationScope(observation.location);
+  } else if (location !== undefined) {
+    scope = { kind: "location", ...location };
   } else {
     scope = { kind: "repository" };
   }
@@ -420,10 +416,14 @@ function canonicalIdentity(identity: FindingIdentity): string {
   ]);
 }
 
-export function fingerprintSnapshot(snapshot: Observation): string {
+export function fingerprintIdentity(identity: FindingIdentity): string {
   return createHash("sha256")
-    .update(canonicalIdentity(findingIdentityFromSnapshot(snapshot)), "utf8")
+    .update(canonicalIdentity(identity), "utf8")
     .digest("hex");
+}
+
+export function fingerprintSnapshot(snapshot: Observation): string {
+  return fingerprintIdentity(findingIdentityFromSnapshot(snapshot));
 }
 
 export function fingerprintObservation(observation: Observation): string {

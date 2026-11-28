@@ -1,16 +1,9 @@
 import { lefthookFilename } from "./lefthook.js";
 import { realpath } from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { GitClient } from "../git/client.js";
+import { isContainedPath } from "../inspection/paths.js";
 import { resolveInstalledCliCommand, type ScanHookName } from "./command.js";
 import {
   guardedHookInvocation,
@@ -38,10 +31,7 @@ import {
 } from "../reporting/hook-update-notice.js";
 export { HOOK_UPDATE_NOTICE } from "../reporting/hook-update-notice.js";
 
-function contained(root: string, path: string): boolean {
-  const value = relative(root, path);
-  return !isAbsolute(value) && value !== ".." && !value.startsWith(`..${sep}`);
-}
+const contained = isContainedPath;
 
 function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)

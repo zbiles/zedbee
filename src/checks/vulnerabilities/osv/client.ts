@@ -12,6 +12,7 @@ import type { OsvAdvisory, OsvClient, OsvPackageQuery } from "./types.js";
 const OSV_ORIGIN = "https://api.osv.dev";
 const QUERY_BATCH_URL = `${OSV_ORIGIN}/v1/querybatch`;
 const DEFAULT_BATCH_SIZE = 1_000;
+const QUERY_BATCH_CONCURRENCY = 4;
 const MAX_QUERIES = 20_000;
 const PROBE_QUERY: OsvPackageQuery = Object.freeze({
   name: "@zedbee/osv-connectivity-probe",
@@ -75,6 +76,20 @@ function chunks<T>(
   return result;
 }
 
+async function boundedAll<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  run: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const limit = pLimit(concurrency);
+  try {
+    return await Promise.all(values.map((value) => limit(() => run(value))));
+  } catch (error) {
+    limit.clearQueue();
+    throw error;
+  }
+}
+
 function unavailableForStatus(status: number): OsvUnavailableError | undefined {
   if (status === 429) {
     return new OsvUnavailableError(
@@ -120,11 +135,17 @@ function safeRequestError(
   );
 }
 
+export function osvRetryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 250 * 2 ** (attempt - 1));
+  });
+}
+
 export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? 15_000;
   const retries = options.retries ?? 2;
-  const retryDelay = options.retryDelay ?? (async () => Promise.resolve());
+  const retryDelay = options.retryDelay ?? osvRetryDelay;
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   const detailConcurrency = options.detailConcurrency ?? 4;
   const maxPages = options.maxPages ?? 10;
@@ -232,18 +253,11 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
     ids: readonly string[],
     signal: AbortSignal,
   ): Promise<ReadonlyMap<string, OsvAdvisory>> => {
-    const limit = pLimit(detailConcurrency);
-    try {
-      const entries = await Promise.all(
-        ids.map((id) =>
-          limit(async () => [id, await fetchAdvisory(id, signal)] as const),
-        ),
-      );
-      return new Map(entries);
-    } catch (error) {
-      limit.clearQueue();
-      throw error;
-    }
+    const advisories = new Map<string, OsvAdvisory>();
+    await boundedAll(ids, detailConcurrency, async (id) => {
+      advisories.set(id, await fetchAdvisory(id, signal));
+    });
+    return advisories;
   };
 
   const query = async (
@@ -273,8 +287,14 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
     }));
     while (pending.length > 0) {
       const next: QueryEntry[] = [];
-      for (const batch of chunks(pending, batchSize)) {
-        const results = await queryBatch(batch, signal);
+      const batches = chunks(pending, batchSize);
+      const batchResults = await boundedAll(
+        batches,
+        QUERY_BATCH_CONCURRENCY,
+        (batch) => queryBatch(batch, signal),
+      );
+      batches.forEach((batch, batchIndex) => {
+        const results = batchResults[batchIndex] ?? [];
         results.forEach((result, index) => {
           const entry = batch[index];
           if (entry === undefined) return;
@@ -296,7 +316,7 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
             seenTokens: new Set([...entry.seenTokens, token]),
           });
         });
-      }
+      });
       pending = next;
     }
 

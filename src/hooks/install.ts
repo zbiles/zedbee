@@ -34,10 +34,21 @@ export function isStockHuskyDispatcher(source: string | undefined): boolean {
     normalized === HUSKY_DISPATCHER || normalized === `${HUSKY_DISPATCHER}\n`
   );
 }
+function huskyPackageRoot(): string {
+  return dirname(fileURLToPath(import.meta.resolve("husky")));
+}
+
+let bundledRuntime: Promise<string> | undefined;
+
 /** Only bundled stock runtime bytes establish verified dispatch. */
-async function bundledHuskyRuntime(): Promise<string> {
-  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
-  return readFile(join(huskyRoot, "husky"), "utf8");
+function bundledHuskyRuntime(): Promise<string> {
+  bundledRuntime ??= readFile(join(huskyPackageRoot(), "husky"), "utf8").catch(
+    (error: unknown) => {
+      bundledRuntime = undefined;
+      throw error;
+    },
+  );
+  return bundledRuntime;
 }
 
 export async function isStockHuskyHelper(
@@ -116,7 +127,7 @@ export async function hooksPathValue(root: string): Promise<string | null> {
 export async function trackedRuntimeChanges(
   root: string,
 ): Promise<readonly InitFileChange[] | undefined> {
-  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
+  const huskyRoot = huskyPackageRoot();
   const [runtime, license] = await Promise.all([
     bundledHuskyRuntime(),
     readFile(join(huskyRoot, "LICENSE"), "utf8"),
@@ -228,6 +239,9 @@ export async function validateLocalHookMigration(
   }
 }
 
+/** A refusal whose fixed message is safe to show the user. */
+export class TrackedHookActivationError extends Error {}
+
 /** Installs only trusted bundled dispatcher data; never runs project scripts. */
 export async function installTrackedHooks(root = process.cwd()): Promise<void> {
   if (process.env.CI || process.env.HUSKY === "0") return;
@@ -239,13 +253,13 @@ export async function installTrackedHooks(root = process.cwd()): Promise<void> {
   }
   const before = await hooksPathValue(root);
   if (before !== null && before !== ".husky/_")
-    throw new Error(
+    throw new TrackedHookActivationError(
       "Zedbee will not replace another configured hook integration.",
     );
   if (before === null) await validateLocalHookMigration(root);
   const runtime = await trackedRuntimeChanges(root);
   if (runtime === undefined)
-    throw new Error(
+    throw new TrackedHookActivationError(
       "Zedbee will not replace a customized Husky dispatcher. Use the existing hook installation command.",
     );
   const proposal: InitProposal = {
@@ -267,6 +281,22 @@ export async function installTrackedHooks(root = process.cwd()): Promise<void> {
   };
   const { applyInitProposal } = await import("../init/write-config.js");
   await applyInitProposal(proposal);
+}
+
+/** Runs tracked hook activation and reports a refusal without leaking other errors. */
+export async function activateTrackedHooks(
+  root: string,
+  writeStderr: (value: string) => void,
+): Promise<0 | 2> {
+  try {
+    await installTrackedHooks(root);
+    return 0;
+  } catch (error) {
+    const reason =
+      error instanceof TrackedHookActivationError ? ` ${error.message}` : "";
+    writeStderr(`Zedbee could not activate tracked hooks safely.${reason}\n`);
+    return 2;
+  }
 }
 
 export const TRACKED_INSTALL_SCRIPT = `// Activate the reviewed tracked hooks after dependency installation.

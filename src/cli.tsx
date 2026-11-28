@@ -41,9 +41,7 @@ interface CommanderScanOptions {
   source: boolean;
   color: boolean;
   animations: boolean;
-  timeout?: string;
-  noTimeout: boolean;
-  signal?: AbortSignal;
+  timeout?: string | false;
   trustProjectPrettier: boolean;
 }
 
@@ -100,14 +98,20 @@ export function scanTimeoutOverrides(
   return typeof timeout === "string" ? { timeout } : {};
 }
 
+function commandOutputIO() {
+  return {
+    writeStdout: (value: string): void => void process.stdout.write(value),
+    writeStderr: (value: string): void => void process.stderr.write(value),
+  };
+}
+
 function commandTerminalIO() {
   return {
     stdinIsTTY: process.stdin.isTTY === true,
     stdoutIsTTY: process.stdout.isTTY === true,
     width: normalizeTerminalWidth(process.stdout.columns),
     env: process.env,
-    writeStdout: (value: string) => process.stdout.write(value),
-    writeStderr: (value: string) => process.stderr.write(value),
+    ...commandOutputIO(),
   };
 }
 
@@ -211,14 +215,7 @@ export async function runCli(
         ).executeTelemetryCommand(
           operation,
           process.env,
-          {
-            writeStdout: (value) => {
-              process.stdout.write(value);
-            },
-            writeStderr: (value) => {
-              process.stderr.write(value);
-            },
-          },
+          commandOutputIO(),
           options.format,
         );
       });
@@ -244,17 +241,7 @@ export async function runCli(
       exitCode = await (
         dependencies.executeAgentCommand ??
         (await import("./commands/agent.js")).executeAgentCommand
-      )(
-        { cwd: process.cwd(), ...options },
-        {
-          writeStdout: (value) => {
-            process.stdout.write(value);
-          },
-          writeStderr: (value) => {
-            process.stderr.write(value);
-          },
-        },
-      );
+      )({ cwd: process.cwd(), ...options }, commandOutputIO());
     });
 
   const service = program
@@ -276,10 +263,7 @@ export async function runCli(
       .action(async (options: { format: "text" | "json" }) => {
         exitCode = await (
           await import("./commands/service.js")
-        ).executeServiceCommand(operation, options.format, {
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
-        });
+        ).executeServiceCommand(operation, options.format, commandOutputIO());
       });
   }
 
@@ -447,9 +431,11 @@ export async function runCli(
     .description("activate the reviewed tracked hooks using bundled tooling")
     .action(async () => {
       try {
-        await (
+        exitCode = await (
           await import("./hooks/install.js")
-        ).installTrackedHooks(process.cwd());
+        ).activateTrackedHooks(process.cwd(), (value) => {
+          process.stderr.write(value);
+        });
       } catch {
         process.stderr.write(
           "Zedbee could not activate tracked hooks safely.\n",

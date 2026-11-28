@@ -47,11 +47,13 @@ function lineStarts(source: string): readonly number[] {
   return starts;
 }
 
+type ComplexityCheckId = "cyclomaticComplexity" | "readabilityComplexity";
+
 const METRIC_OBSERVATION: Readonly<
   Record<
     ComplexityMetricName,
     {
-      readonly check: "cyclomaticComplexity" | "readabilityComplexity";
+      readonly check: ComplexityCheckId;
       readonly message: string;
     }
   >
@@ -269,19 +271,12 @@ export async function collectComplexityObservations(
   return observationsFromMessages(file, source, messages, limit);
 }
 
-async function collectSide(
-  snapshotRoot: string,
+function candidateSourcePaths(
   inspection: RepositoryInspection,
   target: CheckTarget,
-  checkId: "cyclomaticComplexity" | "readabilityComplexity",
-  metricName: ComplexityMetricName,
-  policyForFile: FilePolicyResolver,
   side: SnapshotSide,
   selectedPaths: ReadonlySet<string>,
-): Promise<ComplexitySnapshot> {
-  const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
-  if (canonicalRoot !== inspection.snapshotRoot)
-    throw new Error("Complexity analysis failed.");
+): Set<string> {
   const workspace = findWorkspace(inspection, target.relativeRoot);
   const candidates = new Set(workspace?.sourceFiles ?? []);
   if (side === "baseline") {
@@ -291,16 +286,70 @@ async function collectSide(
       }
     }
   }
-  const files = [...candidates]
-    .filter((path) => MANAGED_SOURCE_PATH.test(path))
-    .filter((path) => {
-      const policy = policyForFile(checkId, path, side);
-      return (
-        policy.severity !== "off" &&
-        (selectedPaths.has(path) || policy.when === "always")
-      );
-    })
-    .sort(compareCodeUnits);
+  return candidates;
+}
+
+function complexityFileLimits(
+  candidates: Iterable<string>,
+  checkId: ComplexityCheckId,
+  side: SnapshotSide,
+  selectedPaths: ReadonlySet<string>,
+  policyForFile: FilePolicyResolver,
+): Map<string, number> {
+  const limits = new Map<string, number>();
+  for (const path of candidates) {
+    if (!MANAGED_SOURCE_PATH.test(path)) continue;
+    const policy = policyForFile(checkId, path, side);
+    if (
+      policy.severity === "off" ||
+      !(selectedPaths.has(path) || policy.when === "always")
+    ) {
+      continue;
+    }
+    limits.set(path, (policy as ResolvedComplexityPolicy).max);
+  }
+  return limits;
+}
+
+function fileMetricObservations(
+  file: string,
+  source: string,
+  messages: readonly LinterTypes.LintMessage[],
+  metricName: ComplexityMetricName,
+  limit: number,
+): Observation[] {
+  return observationsFromMessages(file, source, messages, limit).filter(
+    ({ metric }) => metric?.name === metricName,
+  );
+}
+
+async function collectSide(
+  snapshotRoot: string,
+  inspection: RepositoryInspection,
+  target: CheckTarget,
+  checkId: ComplexityCheckId,
+  metricName: ComplexityMetricName,
+  policyForFile: FilePolicyResolver,
+  side: SnapshotSide,
+  selectedPaths: ReadonlySet<string>,
+): Promise<ComplexitySnapshot> {
+  const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
+  if (canonicalRoot !== inspection.snapshotRoot)
+    throw new Error("Complexity analysis failed.");
+  const candidates = candidateSourcePaths(
+    inspection,
+    target,
+    side,
+    selectedPaths,
+  );
+  const limits = complexityFileLimits(
+    candidates,
+    checkId,
+    side,
+    selectedPaths,
+    policyForFile,
+  );
+  const files = [...limits.keys()].sort(compareCodeUnits);
   if (files.length === 0) return { observations: [], files: {} };
   const engine = createManagedEslint({
     cwd: canonicalRoot,
@@ -320,14 +369,14 @@ async function collectSide(
       throw new Error("Complexity analysis failed.");
     sources[file] = result.source;
     try {
-      const policy = policyForFile(checkId, file, side);
       observations.push(
-        ...observationsFromMessages(
+        ...fileMetricObservations(
           file,
           result.source,
           result.messages,
-          (policy as ResolvedComplexityPolicy).max,
-        ).filter(({ metric }) => metric?.name === metricName),
+          metricName,
+          limits.get(file) ?? Number.POSITIVE_INFINITY,
+        ),
       );
     } catch (error) {
       throw new CheckIncompleteError({
@@ -350,7 +399,7 @@ async function collectSide(
 }
 
 function createComplexityAdapter(
-  id: "cyclomaticComplexity" | "readabilityComplexity",
+  id: ComplexityCheckId,
   metricName: ComplexityMetricName,
 ): ObservationCheckAdapter {
   return {
@@ -369,26 +418,32 @@ function createComplexityAdapter(
           if (workspaceOwns(context, "target", pair.target.entity.file))
             donorPaths.add(pair.baseline.entity.file);
         }
-        const baseline = await collectSide(
-          context.snapshots.baselineDir,
-          context.baselineInspection,
-          context.target,
-          id,
-          metricName,
-          context.policyForFile,
-          "baseline",
-          donorPaths,
-        );
-        const target = await collectSide(
-          context.snapshots.targetDir,
-          context.targetInspection,
-          context.target,
-          id,
-          metricName,
-          context.policyForFile,
-          "target",
-          selectedChangedPaths(context, id, "target"),
-        );
+        const [baselineSide, targetSide] = await Promise.allSettled([
+          collectSide(
+            context.snapshots.baselineDir,
+            context.baselineInspection,
+            context.target,
+            id,
+            metricName,
+            context.policyForFile,
+            "baseline",
+            donorPaths,
+          ),
+          collectSide(
+            context.snapshots.targetDir,
+            context.targetInspection,
+            context.target,
+            id,
+            metricName,
+            context.policyForFile,
+            "target",
+            selectedChangedPaths(context, id, "target"),
+          ),
+        ]);
+        if (baselineSide.status === "rejected") throw baselineSide.reason;
+        if (targetSide.status === "rejected") throw targetSide.reason;
+        const baseline = baselineSide.value;
+        const target = targetSide.value;
         const movedIdentities = new Set(
           moves.pairs
             .filter(
@@ -419,7 +474,7 @@ function createComplexityAdapter(
         };
       } catch (error) {
         if (error instanceof CheckIncompleteError) throw error;
-        throw new Error("Complexity analysis failed.");
+        throw new Error("Complexity analysis failed.", { cause: error });
       }
     },
   };

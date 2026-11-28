@@ -6,9 +6,7 @@ import {
   dirname,
   isAbsolute,
   join,
-  relative,
   resolve,
-  sep,
 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -18,6 +16,7 @@ import {
   type GitBlobVisitor,
 } from "./batch-object-stream.js";
 import { GitCommandError } from "./errors.js";
+import { isContainedPath } from "../inspection/paths.js";
 import type { ScanResourcePolicy } from "../scan/resource-policy.js";
 
 export interface GitRunOptions {
@@ -81,16 +80,6 @@ function containsNodeModulesBin(path: string): boolean {
   );
 }
 
-function isContainedPath(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot === "" ||
-    (!isAbsolute(fromRoot) &&
-      fromRoot !== ".." &&
-      !fromRoot.startsWith(`..${sep}`))
-  );
-}
-
 function executableNames(
   environment: Readonly<Record<string, string | undefined>>,
 ): readonly string[] {
@@ -132,13 +121,16 @@ async function repositoryTrustRoot(path: string): Promise<string> {
   }
 }
 
-async function resolveGitCommand(
-  repositoryRoot: string,
-): Promise<ResolvedGitCommand> {
-  const canonicalRoot = await repositoryTrustRoot(repositoryRoot);
+async function trustedPathDirectories(
+  canonicalRoot: string,
+): Promise<string[]> {
+  const candidates = await Promise.all(
+    pathValue(process.env)
+      .split(delimiter)
+      .map((entry) => canonicalDirectory(entry)),
+  );
   const safeDirectories: string[] = [];
-  for (const entry of pathValue(process.env).split(delimiter)) {
-    const directory = await canonicalDirectory(entry);
+  for (const directory of candidates) {
     if (
       directory === undefined ||
       isContainedPath(canonicalRoot, directory) ||
@@ -148,9 +140,18 @@ async function resolveGitCommand(
     }
     safeDirectories.push(directory);
   }
+  return safeDirectories;
+}
+
+async function resolveGitCommand(
+  repositoryRoot: string,
+): Promise<ResolvedGitCommand> {
+  const canonicalRoot = await repositoryTrustRoot(repositoryRoot);
+  const safeDirectories = await trustedPathDirectories(canonicalRoot);
+  const names = executableNames(process.env);
 
   for (const directory of safeDirectories) {
-    for (const name of executableNames(process.env)) {
+    for (const name of names) {
       const candidate = join(directory, name);
       try {
         const canonical = await realpath(candidate);

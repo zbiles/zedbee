@@ -5,7 +5,11 @@ const MULTIPLIERS = {
   d: 86_400_000,
 } as const;
 
-export function parseTemporaryReportMaxAge(value: string): number {
+function parseDuration(value: string): {
+  readonly amount: number;
+  readonly unit: keyof typeof MULTIPLIERS;
+  readonly milliseconds: number;
+} {
   const match = DURATION.exec(value);
   if (match === null) {
     throw new TypeError("Invalid temporary report maximum age");
@@ -16,17 +20,19 @@ export function parseTemporaryReportMaxAge(value: string): number {
   if (!Number.isSafeInteger(milliseconds)) {
     throw new TypeError("Invalid temporary report maximum age");
   }
-  return milliseconds;
+  return { amount, unit, milliseconds };
+}
+
+export function parseTemporaryReportMaxAge(value: string): number {
+  return parseDuration(value).milliseconds;
 }
 
 export function formatTemporaryReportMaxAge(value: string): string {
-  parseTemporaryReportMaxAge(value);
-  const match = DURATION.exec(value)!;
-  const amount = Number(match[1]);
+  const { amount, unit } = parseDuration(value);
   const labels = {
     m: amount === 1 ? "minute" : "minutes",
     h: amount === 1 ? "hour" : "hours",
     d: amount === 1 ? "day" : "days",
   } as const;
-  return `${amount} ${labels[match[2] as keyof typeof labels]}`;
+  return `${amount} ${labels[unit]}`;
 }

@@ -4,7 +4,10 @@ import { readStagedChangeSet } from "../git/change-set.js";
 import { loadConfigFromIndex } from "../config/load-config.js";
 import { analyzableLockfiles } from "../checks/vulnerabilities/inventory/select-lockfiles.js";
 import { joinSnapshotReaders } from "../git/snapshot-work.js";
-import { inspectWorkspaceInstallations } from "./workspace-installation.js";
+import {
+  escapeLabelControls,
+  inspectWorkspaceInstallations,
+} from "./workspace-installation.js";
 import { diagnoseProjectEslint } from "./project-eslint.js";
 import { readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -95,6 +98,16 @@ const failure = (id: DiagnosticId): Diagnostic =>
       "Run zedbee doctor again after correcting the reported setup issue.",
   });
 
+function escapedDiagnostic(diagnostic: Diagnostic): Diagnostic {
+  return Object.freeze({
+    ...diagnostic,
+    message: escapeLabelControls(diagnostic.message),
+    ...(diagnostic.remediation === undefined
+      ? {}
+      : { remediation: escapeLabelControls(diagnostic.remediation) }),
+  });
+}
+
 export async function runDiagnostics(
   probe: DiagnosticProbe,
   context: DiagnosticContext,
@@ -112,7 +125,7 @@ export async function runDiagnostics(
       ) {
         diagnostics.push(failure(id));
       } else {
-        diagnostics.push(Object.freeze({ ...diagnostic }));
+        diagnostics.push(escapedDiagnostic(diagnostic));
       }
     } catch {
       context.signal?.throwIfAborted();
@@ -608,6 +621,7 @@ export function createDefaultDiagnosticProbe(
           };
         }
       }
+
       case "lockfile-support":
         return withSnapshots(context.cwd, async (targetDir) => {
           const inspection = await inspectRepository(targetDir);

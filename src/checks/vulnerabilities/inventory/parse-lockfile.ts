@@ -56,7 +56,9 @@ export async function parseLockfileInventory(
     );
   }
   try {
-    const registry = await captureSnapshotRegistry(inspection.snapshotRoot);
+    const registry = await captureSnapshotRegistry(inspection.snapshotRoot, [
+      lockfilePath,
+    ]);
     const contents = await readContainedFile(registry, lockfilePath, {
       maxBytes: MAX_LOCKFILE_BYTES,
     });

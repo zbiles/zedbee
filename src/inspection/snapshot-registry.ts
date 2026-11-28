@@ -34,6 +34,15 @@ export const IGNORED_DIRECTORY_NAMES = [
   "out",
 ] as const;
 
+const IGNORED_DIRECTORY_SET: ReadonlySet<string> = new Set(
+  IGNORED_DIRECTORY_NAMES,
+);
+
+/** True when any `/`-separated segment of the path is an ignored directory name. */
+export function hasIgnoredDirectorySegment(path: string): boolean {
+  return path.split("/").some((part) => IGNORED_DIRECTORY_SET.has(part));
+}
+
 export interface SnapshotIdentity {
   readonly device: bigint;
   readonly inode: bigint;

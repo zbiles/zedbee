@@ -1,4 +1,5 @@
 import { gt, prerelease, satisfies, valid, validRange } from "semver";
+import { readBoundedBody } from "../core/read-bounded-body.js";
 
 export interface ReleaseMetadata {
   readonly name: "zedbee";
@@ -75,24 +76,9 @@ export async function fetchLatestMetadata(
       await response.body?.cancel();
       return undefined;
     }
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 64 * 1024) {
-          await reader.cancel();
-          return undefined;
-        }
-        chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    return releaseMetadata(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+    const bytes = await readBoundedBody(response.body, 64 * 1024);
+    if (bytes === undefined) return undefined;
+    return releaseMetadata(JSON.parse(bytes.toString("utf8")));
   } catch {
     return undefined;
   }

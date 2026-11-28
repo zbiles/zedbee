@@ -89,8 +89,15 @@ type ResolveWorkspaceReactVersion = (
   workspace: WorkspaceInspection,
 ) => Promise<string>;
 
+type ReactCheckId = "reactCorrectness" | "reactAccessibility";
+
+const REACT_CHECK_LABEL: Readonly<Record<ReactCheckId, string>> = {
+  reactCorrectness: "React correctness",
+  reactAccessibility: "React accessibility",
+};
+
 function reactAnalysisFailure(
-  id: "reactCorrectness" | "reactAccessibility",
+  id: ReactCheckId,
   path?: string,
 ): CheckIncompleteError {
   const correctness = id === "reactCorrectness";
@@ -98,9 +105,7 @@ function reactAnalysisFailure(
     code: correctness
       ? "REACT_CORRECTNESS_ANALYSIS_FAILED"
       : "REACT_ACCESSIBILITY_ANALYSIS_FAILED",
-    message: correctness
-      ? "React correctness analysis could not analyze every requested source file."
-      : "React accessibility analysis could not analyze every requested source file.",
+    message: `${REACT_CHECK_LABEL[id]} analysis could not analyze every requested source file.`,
     remediation:
       "Verify that the source file uses supported JavaScript or TypeScript syntax, then retry. If it does, report a Zedbee React analyzer compatibility issue.",
     ...(path === undefined ? {} : { path }),
@@ -110,7 +115,7 @@ function reactAnalysisFailure(
 function groupAnalysisFailure(
   error: unknown,
   signal: AbortSignal,
-  id: "reactCorrectness" | "reactAccessibility",
+  id: ReactCheckId,
   files: readonly string[],
 ): Error {
   signal.throwIfAborted();
@@ -122,7 +127,7 @@ async function prepareSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
-  id: "reactCorrectness" | "reactAccessibility",
+  id: ReactCheckId,
   mode: ManagedEslintMode,
   resolveWorkspaceReactVersion: ResolveWorkspaceReactVersion,
   side: SnapshotSide,
@@ -130,10 +135,7 @@ async function prepareSide(
   signal: AbortSignal,
   selectedPaths?: ReadonlySet<string>,
 ): Promise<PreparedSide | undefined> {
-  const failure =
-    id === "reactCorrectness"
-      ? "React correctness analysis failed."
-      : "React accessibility analysis failed.";
+  const failure = `${REACT_CHECK_LABEL[id]} analysis failed.`;
   signal.throwIfAborted();
   try {
     const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -172,7 +174,7 @@ async function prepareSide(
 
 async function collectPreparedSide(
   prepared: PreparedSide | undefined,
-  id: "reactCorrectness" | "reactAccessibility",
+  id: ReactCheckId,
   mode: ManagedEslintMode,
   reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
   engineFactory: ReactEslintEngineFactory,
@@ -218,7 +220,7 @@ async function collectPreparedSide(
 }
 
 export function createReactAdapter(
-  id: "reactCorrectness" | "reactAccessibility",
+  id: ReactCheckId,
   mode: ManagedEslintMode,
   reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory = managedReactCorrectnessConfig,
   engineFactory: ReactEslintEngineFactory = createManagedEslint,

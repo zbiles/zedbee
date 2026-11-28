@@ -39,7 +39,10 @@ import {
   buildReportCallouts,
   type ReportCalloutLine,
 } from "../reporting/report-callouts.js";
-import { buildScanResultSections } from "../reporting/result-sections.js";
+import {
+  buildScanResultSections,
+  type ScanResultSections,
+} from "../reporting/result-sections.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { presentIncompleteChecks } from "../reporting/incomplete-checks.js";
@@ -85,7 +88,9 @@ const PRIMARY_TEXT_HEADINGS = new Set([
 ]);
 
 const FINDING_TEXT_LABELS: readonly string[] = [
-  ...new Set([...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId))),
+  ...new Set(
+    [...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId)),
+  ),
 ];
 
 const FIX_LABEL_PATTERN = /^(\s*Fix:)(.*)$/u;
@@ -293,21 +298,13 @@ function disclosureSentenceLines(
   );
 }
 
-function disclosureLines(report: ScanReport, width: number): string[] {
-  if (report.networkDisclosures.length === 0) return [];
-  return [
-    "",
-    "NETWORK DISCLOSURE",
-    ...disclosureSentenceLines(report.networkDisclosures, width),
-  ];
-}
-
 function disclosureSectionLines(
+  heading: "NETWORK DISCLOSURE" | "DISCLOSURES",
   disclosures: ScanReport["networkDisclosures"],
   width: number,
 ): string[] {
   if (disclosures.length === 0) return [];
-  return ["", "DISCLOSURES", ...disclosureSentenceLines(disclosures, width)];
+  return ["", heading, ...disclosureSentenceLines(disclosures, width)];
 }
 
 function warningBodyLines(
@@ -462,6 +459,20 @@ function hookUpdateLines(report: ScanReport, width: number): string[] {
       ];
 }
 
+function presentedFindings(
+  presentation: TerminalPresentation,
+  mode: ScanReport["mode"],
+): readonly Finding[] {
+  return validateReportDisplayStrings({
+    checks: [],
+    summary: {
+      findings: presentation.findings.map((finding) =>
+        repairFindingForMode(finding, mode),
+      ),
+    },
+  }).summaryFindings;
+}
+
 function automaticTextLines(
   report: ScanReport,
   sanitized: ReturnType<typeof validateReportDisplayStrings>,
@@ -469,14 +480,7 @@ function automaticTextLines(
   width: number,
   verbose: boolean,
 ): string[] {
-  const selectedFindings = validateReportDisplayStrings({
-    checks: [],
-    summary: {
-      findings: presentation.findings.map((finding) =>
-        repairFindingForMode(finding, report.mode),
-      ),
-    },
-  }).summaryFindings;
+  const selectedFindings = presentedFindings(presentation, report.mode);
   const sections = buildScanResultSections(
     { ...report, checks: sanitized.checks },
     { ...presentation, findings: selectedFindings },
@@ -504,7 +508,7 @@ function automaticTextLines(
     ...sections.previewNotes.flatMap((line) => wrapWords(line, width)),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
     ...skippedReasonLines(sanitized.checks, width),
-    ...disclosureSectionLines(sections.disclosures, width),
+    ...disclosureSectionLines("DISCLOSURES", sections.disclosures, width),
     ...reportWarningsSectionLines(sections.reportWarnings, width),
     ...incompleteSectionLines(sections.incompleteChecks, width),
     "",
@@ -524,6 +528,7 @@ function automaticTextLines(
 function guidanceLines(
   report: ScanReport,
   presentation: TerminalPresentation | undefined,
+  automaticFixes: ScanResultSections["automaticFixes"],
   width: number,
 ): string[] {
   if (
@@ -542,8 +547,7 @@ function guidanceLines(
       total: presentation.totalFindingCount,
       reportPath: presentation.reportPath,
       maximumAge: presentation.maximumAge,
-      automaticFixes: buildScanResultSections(report, presentation)
-        .automaticFixes,
+      automaticFixes,
       ...(report.installedCliCommand === undefined
         ? {}
         : { installedCliCommand: report.installedCliCommand }),
@@ -600,14 +604,11 @@ export function renderText(
   const displayedFindings =
     options.presentation === undefined
       ? sanitized.summaryFindings
-      : validateReportDisplayStrings({
-          checks: [],
-          summary: {
-            findings: options.presentation.findings.map((finding) =>
-              repairFindingForMode(finding, report.mode),
-            ),
-          },
-        }).summaryFindings;
+      : presentedFindings(options.presentation, report.mode);
+  const sections =
+    options.presentation === undefined
+      ? undefined
+      : buildScanResultSections(report, options.presentation);
   const lines = [
     ...headline(report, displayedFindings, width),
     ...hookUpdateLines(report, width),
@@ -618,19 +619,23 @@ export function renderText(
       width,
     ),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
-    ...disclosureLines(report, width),
+    ...disclosureSectionLines(
+      "NETWORK DISCLOSURE",
+      report.networkDisclosures,
+      width,
+    ),
     ...completeManagedFixLines(
       sanitized.summaryFindings,
       width,
       report.installedCliCommand,
     ),
-    ...(options.presentation === undefined
-      ? []
-      : buildScanResultSections(
-          report,
-          options.presentation,
-        ).previewNotes.flatMap((line) => wrapWords(line, width))),
-    ...guidanceLines(report, options.presentation, width),
+    ...(sections?.previewNotes ?? []).flatMap((line) => wrapWords(line, width)),
+    ...guidanceLines(
+      report,
+      options.presentation,
+      sections?.automaticFixes ?? [],
+      width,
+    ),
     ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
     ...deliveryFallbackLines(options.presentation, width),
   ];

@@ -12,7 +12,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
-import { isContainedPath } from "../../inspection/read-json.js";
+import {
+  isContainedPath,
+  readBoundedBytes,
+} from "../../inspection/read-json.js";
 
 const MANAGED_CONFIG_PREFIX = "zedbee-managed-config-";
 const MANAGED_OUTPUT_PREFIX = "zedbee-managed-output-";
@@ -173,7 +176,9 @@ export async function createManagedOutputDirectory(
           "Zedbee rejected a managed artifact whose identity changed.",
         );
       }
-      return await handle.readFile("utf8");
+      return (
+        await readBoundedBytes(handle, artifactName, MAX_MANAGED_JSON_BYTES)
+      ).toString("utf8");
     } finally {
       await handle.close();
     }
@@ -263,7 +268,9 @@ export async function writeManagedJsonConfig(
   let configIdentity: FileIdentity | undefined;
   let cleaned = false;
 
-  const cleanup = async (): Promise<void> => {
+  const removeManagedConfig = async (
+    verifyContents: boolean,
+  ): Promise<void> => {
     if (cleaned || configPath === undefined || configIdentity === undefined) {
       return;
     }
@@ -297,8 +304,9 @@ export async function writeManagedJsonConfig(
       );
     }
     if (
-      configMetadata.size !== expectedByteLength ||
-      (await readFile(configPath, "utf8")) !== expectedContents
+      verifyContents &&
+      (configMetadata.size !== expectedByteLength ||
+        (await readFile(configPath, "utf8")) !== expectedContents)
     ) {
       throw new ManagedConfigError(
         "Zedbee refused to clean a managed config whose contents changed.",
@@ -319,10 +327,10 @@ export async function writeManagedJsonConfig(
       await handle.close();
     }
 
-    return { path: configPath, cleanup };
+    return { path: configPath, cleanup: () => removeManagedConfig(true) };
   } catch (error) {
     if (configPath !== undefined && configIdentity !== undefined) {
-      await cleanup();
+      await removeManagedConfig(false);
     } else {
       const metadata = await lstat(canonicalDirectory, { bigint: true });
       const entries = await readdir(canonicalDirectory);

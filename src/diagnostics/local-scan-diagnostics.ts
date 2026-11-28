@@ -18,6 +18,22 @@ export interface LocalScanDiagnostics {
   readonly performance: ScanPerformanceSummary;
 }
 
+const CHECK_PERFORMANCE_REQUIRED_FIELDS = [
+  "check_id",
+  "task_count",
+  "elapsed_sum_ms",
+  "elapsed_max_ms",
+  "cache_hits",
+  "cache_misses",
+  "cache_bypasses",
+] as const;
+const CHECK_PERFORMANCE_OPTIONAL_FIELDS = [
+  "queue_sum_ms",
+  "queue_max_ms",
+  "worker_sum_ms",
+  "worker_max_ms",
+] as const;
+
 function record(value: unknown): Record<string, unknown> {
   if (
     typeof value !== "object" ||
@@ -124,22 +140,11 @@ export function sanitizeLocalScanDiagnostics(
   const seen = new Set<string>();
   const checks = p.checks.map((raw) => {
     const row = record(raw);
-    const required = [
-      "check_id",
-      "task_count",
-      "elapsed_sum_ms",
-      "elapsed_max_ms",
-      "cache_hits",
-      "cache_misses",
-      "cache_bypasses",
-    ];
-    const optional = [
-      "queue_sum_ms",
-      "queue_max_ms",
-      "worker_sum_ms",
-      "worker_max_ms",
-    ];
-    keys(row, required, optional);
+    keys(
+      row,
+      CHECK_PERFORMANCE_REQUIRED_FIELDS,
+      CHECK_PERFORMANCE_OPTIONAL_FIELDS,
+    );
     if (
       typeof row.check_id !== "string" ||
       !(CHECK_IDS as readonly string[]).includes(row.check_id) ||
@@ -156,7 +161,7 @@ export function sanitizeLocalScanDiagnostics(
       cache_misses: count(row.cache_misses),
       cache_bypasses: count(row.cache_bypasses),
     };
-    for (const key of optional)
+    for (const key of CHECK_PERFORMANCE_OPTIONAL_FIELDS)
       if (Object.hasOwn(row, key))
         Object.assign(result, { [key]: duration(row[key]) });
     return Object.freeze(result);

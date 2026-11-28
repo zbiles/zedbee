@@ -12,8 +12,9 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { compareCodeUnits } from "../core/compare.js";
+import { isContainedPath } from "../inspection/paths.js";
 import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
 import { GitCommandError } from "./errors.js";
@@ -182,44 +183,38 @@ function invalidSelectedPath(): never {
   );
 }
 
-function parseStagedEntries(output: string): SnapshotEntry[] {
+function nulRecords(output: string): string[] {
   if (output === "") return [];
   if (!output.endsWith("\0")) return invalidSelectedPath();
+  return output.slice(0, -1).split("\0");
+}
 
-  return output
-    .slice(0, -1)
-    .split("\0")
-    .map((record) => {
-      const match = STAGED_ENTRY.exec(record);
-      if (match === null || !supportedMode(match[1]!)) {
-        return invalidSelectedPath();
-      }
-      if (match[3] !== "0") {
-        throw new SnapshotError(
-          "UNRESOLVED_INDEX",
-          "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
-        );
-      }
-      return { mode: match[1], objectId: match[2]!, path: match[4]! };
-    });
+function parseStagedEntries(output: string): SnapshotEntry[] {
+  return nulRecords(output).map((record) => {
+    const match = STAGED_ENTRY.exec(record);
+    if (match === null || !supportedMode(match[1]!)) {
+      return invalidSelectedPath();
+    }
+    if (match[3] !== "0") {
+      throw new SnapshotError(
+        "UNRESOLVED_INDEX",
+        "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
+      );
+    }
+    return { mode: match[1], objectId: match[2]!, path: match[4]! };
+  });
 }
 
 function parseTreeEntries(output: string): SnapshotEntry[] {
-  if (output === "") return [];
-  if (!output.endsWith("\0")) return invalidSelectedPath();
-
-  return output
-    .slice(0, -1)
-    .split("\0")
-    .map((record) => {
-      const match = TREE_ENTRY.exec(record);
-      if (match === null || !supportedMode(match[1]!)) {
-        return invalidSelectedPath();
-      }
-      const expectedType = match[1] === "160000" ? "commit" : "blob";
-      if (match[2] !== expectedType) return invalidSelectedPath();
-      return { mode: match[1], objectId: match[3]!, path: match[4]! };
-    });
+  return nulRecords(output).map((record) => {
+    const match = TREE_ENTRY.exec(record);
+    if (match === null || !supportedMode(match[1]!)) {
+      return invalidSelectedPath();
+    }
+    const expectedType = match[1] === "160000" ? "commit" : "blob";
+    if (match[2] !== expectedType) return invalidSelectedPath();
+    return { mode: match[1], objectId: match[3]!, path: match[4]! };
+  });
 }
 
 const INTENT_TO_ADD_FLAG = 0x20000000;
@@ -260,13 +255,7 @@ function containedPath(
     return undefined;
   }
   const candidate = resolve(root, repositoryPath);
-  const fromRoot = relative(root, candidate);
-  if (
-    fromRoot === "" ||
-    isAbsolute(fromRoot) ||
-    fromRoot === ".." ||
-    fromRoot.startsWith(`..${sep}`)
-  ) {
+  if (relative(root, candidate) === "" || !isContainedPath(root, candidate)) {
     return undefined;
   }
   return candidate;

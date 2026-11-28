@@ -7,7 +7,7 @@ import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { readContainedLines } from "../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
-  IGNORED_DIRECTORY_NAMES,
+  hasIgnoredDirectorySegment,
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
@@ -24,6 +24,14 @@ function normalizedPath(file: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function cachedPathNormalizer(): (file: string) => string | undefined {
+  const cache = new Map<string, string | undefined>();
+  return (file) => {
+    if (!cache.has(file)) cache.set(file, normalizedPath(file));
+    return cache.get(file);
+  };
 }
 
 function secretRangeIndex(
@@ -61,10 +69,11 @@ function secretRangeIndex(
 
 function overlapsSecretLine(
   index: ReadonlyMap<string, readonly SecretRange[]>,
+  normalize: (file: string) => string | undefined,
   file: string,
   line: number,
 ): boolean {
-  const normalized = normalizedPath(file);
+  const normalized = normalize(file);
   if (normalized === undefined) return false;
   return (index.get(normalized) ?? []).some(
     ({ startLine, endLine }) => line >= startLine && line <= endLine,
@@ -194,6 +203,7 @@ export async function enrichSourceExcerpts(
 ): Promise<readonly CheckResult[]> {
   // Attribution and visibility decide what is reported, never what is secret.
   const secretRanges = secretRangeIndex([...checks, ...privateTargetResults]);
+  const normalize = cachedPathNormalizer();
   const requestedLines = new Map<string, Set<number>>();
   for (const check of checks) {
     for (const finding of check.findings) {
@@ -205,7 +215,7 @@ export async function enrichSourceExcerpts(
         line === undefined ||
         !Number.isSafeInteger(line) ||
         line < 1 ||
-        overlapsSecretLine(secretRanges, file, line)
+        overlapsSecretLine(secretRanges, normalize, file, line)
       ) {
         continue;
       }
@@ -223,7 +233,7 @@ export async function enrichSourceExcerpts(
     sourceLines.set(
       file,
       limit(async () => {
-        const path = normalizedPath(file);
+        const path = normalize(file);
         if (path === undefined) return undefined;
         const registry = await captureSnapshotRegistry(snapshot.snapshotRoot, [
           path,
@@ -231,15 +241,7 @@ export async function enrichSourceExcerpts(
         if (
           registry
             .entries()
-            .some((entry) =>
-              entry.repositoryPath
-                .split("/")
-                .some((part) =>
-                  IGNORED_DIRECTORY_NAMES.includes(
-                    part as (typeof IGNORED_DIRECTORY_NAMES)[number],
-                  ),
-                ),
-            )
+            .some((entry) => hasIgnoredDirectorySegment(entry.repositoryPath))
         )
           return undefined;
         return readContainedLines(registry, path, [...lines], {
@@ -260,7 +262,8 @@ export async function enrichSourceExcerpts(
           const file = finding.location?.file;
           if (
             finding.check === "secrets" ||
-            (file !== undefined && overlapsSecretLine(secretRanges, file, line))
+            (file !== undefined &&
+              overlapsSecretLine(secretRanges, normalize, file, line))
           ) {
             return copyFinding(
               finding,

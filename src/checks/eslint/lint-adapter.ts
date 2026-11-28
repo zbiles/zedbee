@@ -230,6 +230,7 @@ async function prepareSide(
     const uncovered = typescriptFiles
       .filter((path) => !covered.has(path))
       .sort(compareCodeUnits);
+    const uncoveredSet = new Set(uncovered);
     const blocking = await coverage.required(
       uncovered.filter(
         (path) =>
@@ -258,7 +259,7 @@ async function prepareSide(
           ...group,
           files: group.files.filter(
             (path) =>
-              !uncovered.includes(path) ||
+              !uncoveredSet.has(path) ||
               policyForFile("lint", path, side).typeInformation ===
                 "when-available",
           ),

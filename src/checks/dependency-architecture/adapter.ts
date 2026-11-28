@@ -5,9 +5,9 @@ import {
   URL_SCHEME,
 } from "../project/import-specifier.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
+import { owningWorkspace } from "../../inspection/workspace-owner.js";
 import {
   prepareSnapshotAliases,
-  sourceModuleSpecifiers,
   normalizedAliasSpecifier,
   type PreparedSnapshotAliases,
 } from "../typescript/aliases.js";
@@ -20,7 +20,6 @@ import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import {
   canonicalizeSnapshotRoot,
-  readContainedFile,
   readJsonData,
 } from "../../inspection/read-json.js";
 import {
@@ -45,25 +44,15 @@ import { COMPILER_SOURCE } from "../compiler-paths.js";
 const GENERATED = "(^|/)(?:node_modules|dist|build|coverage|vendor)(?:/|$)";
 const UNSAFE_RESOLUTION = "^(?:\\.\\.(?:/|$)|/|[A-Za-z]:[/\\\\])";
 
-function selectedTsconfig(workspace: WorkspaceInspection): string | undefined {
-  const sorted = [...workspace.tsconfigPaths].sort(
-    (left, right) =>
-      Number(right.endsWith("/tsconfig.json") || right === "tsconfig.json") -
-        Number(left.endsWith("/tsconfig.json") || left === "tsconfig.json") ||
-      compareCodeUnits(left, right),
-  );
-  return sorted[0];
-}
-
 function validateSpecifier(sourcePath: string, specifier: string): void {
   if (!isContainedImportSpecifier(sourcePath, specifier))
     throw new TypeError("Dependency import escaped the snapshot");
 }
 
-async function validateContainedImports(
+function validateContainedImports(
   registry: SnapshotRegistry,
-  sourceFiles: readonly string[],
-): Promise<void> {
+  specifiers: readonly (readonly [string, string])[],
+): void {
   // Dependency-cruiser uses native reads; its entire input tree must be safe.
   for (const [path] of registry.unavailableSymlinks ?? []) {
     throw new CheckIncompleteError({
@@ -75,11 +64,8 @@ async function validateContainedImports(
         "Provide a link to a tracked target inside the repository or remove the runtime link from the selected snapshot, then retry.",
     });
   }
-  for (const sourcePath of sourceFiles) {
-    const source = await readContainedFile(registry, sourcePath);
-    for (const specifier of sourceModuleSpecifiers(sourcePath, source))
-      validateSpecifier(sourcePath, specifier);
-  }
+  for (const [sourcePath, specifier] of specifiers)
+    validateSpecifier(sourcePath, specifier);
 }
 
 function validateContainedGraph(result: ICruiseResult): void {
@@ -206,49 +192,68 @@ function containedEntrypoint(
   return [...candidates].find((candidate) => sourceFiles.has(candidate));
 }
 
+function workspaceAliasEntries(
+  workspace: WorkspaceInspection,
+  name: string,
+  manifest: Record<string, unknown>,
+  snapshotRoot: string,
+): readonly (readonly [string, string])[] {
+  const entries: (readonly [string, string])[] = [];
+  const sourceFiles = new Set(workspace.sourceFiles);
+  const entrypoints = manifestEntrypoints(manifest);
+  const root =
+    workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
+  const rootFallbacks = [
+    ...ENTRY_EXTENSIONS.flatMap((extension) => [
+      `${root}src/index${extension}`,
+      `${root}src/main${extension}`,
+      `${root}index${extension}`,
+    ]),
+    ...(workspace.sourceFiles.length === 1 ? workspace.sourceFiles : []),
+  ];
+  for (const exportKey of [".", ...entrypoints.keys()].sort(compareCodeUnits)) {
+    const entry =
+      (entrypoints.get(exportKey) ?? [])
+        .filter((target): target is string => target !== null)
+        .map((target) => containedEntrypoint(workspace, sourceFiles, target))
+        .find((candidate) => candidate !== undefined) ??
+      (exportKey === "." && manifest.exports === undefined
+        ? rootFallbacks.find((candidate) => sourceFiles.has(candidate))
+        : undefined);
+    if (entry === undefined) continue;
+    const specifier =
+      exportKey === "." ? name : `${name}/${exportKey.slice(2)}`;
+    entries.push([`${specifier}$`, join(snapshotRoot, entry)]);
+  }
+  return entries;
+}
+
 async function workspaceAliases(
   inspection: RepositoryInspection,
   snapshotRoot: string,
   registry: SnapshotRegistry,
 ): Promise<Readonly<Record<string, string>>> {
+  const named = inspection.workspaces.flatMap((workspace) =>
+    workspace.name === undefined ? [] : [{ workspace, name: workspace.name }],
+  );
+  const loaded = await Promise.all(
+    named.map(async ({ workspace, name }) => ({
+      workspace,
+      name,
+      manifest: entrypointRecord(
+        await readJsonData(registry, workspace.manifestPath),
+      ),
+    })),
+  );
   const aliases: Record<string, string> = {};
-  for (const workspace of inspection.workspaces) {
-    if (workspace.name === undefined) continue;
-    const sourceFiles = new Set(workspace.sourceFiles);
-    const manifest = entrypointRecord(
-      await readJsonData(registry, workspace.manifestPath),
-    );
-    const entrypoints = manifestEntrypoints(manifest);
-    const root =
-      workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-    const rootFallbacks = [
-      ...ENTRY_EXTENSIONS.flatMap((extension) => [
-        `${root}src/index${extension}`,
-        `${root}src/main${extension}`,
-        `${root}index${extension}`,
-      ]),
-      ...(workspace.sourceFiles.length === 1 ? workspace.sourceFiles : []),
-    ];
-    for (const exportKey of [".", ...entrypoints.keys()].sort(
-      compareCodeUnits,
-    )) {
-      const entry =
-        (entrypoints.get(exportKey) ?? [])
-          .filter((target): target is string => target !== null)
-          .map((target) => containedEntrypoint(workspace, sourceFiles, target))
-          .find((candidate) => candidate !== undefined) ??
-        (exportKey === "." && manifest.exports === undefined
-          ? rootFallbacks.find((candidate) =>
-              sourceFiles.has(candidate),
-            )
-          : undefined);
-      if (entry === undefined) continue;
-      const specifier =
-        exportKey === "."
-          ? workspace.name
-          : `${workspace.name}/${exportKey.slice(2)}`;
-      aliases[`${specifier}$`] = join(snapshotRoot, entry);
-    }
+  for (const { workspace, name, manifest } of loaded) {
+    for (const [key, value] of workspaceAliasEntries(
+      workspace,
+      name,
+      manifest,
+      snapshotRoot,
+    ))
+      aliases[key] = value;
   }
   return aliases;
 }
@@ -330,7 +335,11 @@ async function collectSide(
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot) {
-    throw new Error("Dependency architecture analysis failed.");
+    throw new Error("Dependency architecture analysis failed.", {
+      cause: new Error(
+        "Snapshot root does not match the inspected repository root.",
+      ),
+    });
   }
   const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined) return Object.freeze([]);
@@ -338,16 +347,23 @@ async function collectSide(
     .filter((path) => COMPILER_SOURCE.test(path))
     .sort(compareCodeUnits);
   if (sourceFiles.length === 0) return Object.freeze([]);
+  const specifiers: (readonly [string, string])[] = [];
+  const registry = await captureSnapshotRegistry(canonicalRoot);
   const aliases = await prepareSnapshotAliases(
     canonicalRoot,
     inspection,
     workspace,
+    undefined,
+    {
+      registry,
+      onSpecifier: (sourcePath, specifier) => {
+        specifiers.push([sourcePath, specifier]);
+      },
+    },
   );
-  const registry = await captureSnapshotRegistry(canonicalRoot);
-  await validateContainedImports(registry, aliases.sourceFiles);
-  const tsconfig = selectedTsconfig(workspace);
+  validateContainedImports(registry, specifiers);
   const programInput =
-    tsconfig === undefined
+    workspace.tsconfigPaths.length === 0
       ? undefined
       : await loadSnapshotProgramInput(canonicalRoot, canonicalRoot, workspace);
   const run = await cruise(
@@ -377,19 +393,25 @@ async function collectSide(
   );
   signal.throwIfAborted();
   if (run.exitCode !== 0 && run.exitCode !== 1) {
-    throw new Error("Dependency architecture analysis failed.");
+    throw new Error("Dependency architecture analysis failed.", {
+      cause: new Error(`dependency-cruiser exited with code ${run.exitCode}.`),
+    });
   }
   const result = resultObject(run.output);
   validateContainedGraph(result);
-  if ((result.summary.environment.issues?.length ?? 0) > 0) {
-    throw new Error("Dependency architecture analysis failed.");
+  const issues = result.summary.environment.issues ?? [];
+  if (issues.length > 0) {
+    throw new Error("Dependency architecture analysis failed.", {
+      cause: new Error(
+        `dependency-cruiser reported environment issues: ${issues
+          .map(({ name }) => name)
+          .join(", ")}.`,
+      ),
+    });
   }
   const aliasConfigPath = aliases.workspaces.get(
     workspace.relativeRoot,
   )?.configPath;
-  const aliasScopes = [...inspection.workspaces].sort((left, right) =>
-    compareScopeRoots(left.relativeRoot, right.relativeRoot),
-  );
   return normalizeDependencyViolations(
     result,
     canonicalRoot,
@@ -406,10 +428,8 @@ async function collectSide(
           .filter(([, targets]) =>
             targets.some(
               (path) =>
-                aliasScopes.find(
-                  ({ relativeRoot }) =>
-                    relativeRoot === "." || path.startsWith(`${relativeRoot}/`),
-                )?.relativeRoot === workspace.relativeRoot,
+                owningWorkspace(inspection.workspaces, path)?.relativeRoot ===
+                workspace.relativeRoot,
             ),
           )
           .map(([specifier]) => specifier),

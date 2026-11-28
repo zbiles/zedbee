@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createOsvClient,
   osvQueryKey,
+  osvRetryDelay,
 } from "../../../../src/checks/vulnerabilities/osv/client.js";
 import {
   OsvAnalysisError,
@@ -154,6 +155,22 @@ describe("OsvClient", () => {
     await expect(client.query([alpha], new AbortController().signal)).rejects.toMatchObject({
       code: "OSV_PAGINATION_INVALID",
     });
+  });
+
+  it("waits longer before each later retry by default", async () => {
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      void osvRetryDelay(2).then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(499);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("probes with a constant synthetic query", async () => {

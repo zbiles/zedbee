@@ -109,14 +109,11 @@ async function collectSide(
     throw new Error("Duplication analysis failed.");
   }
   const workspace = findWorkspace(inspection, target.relativeRoot);
-  if (workspace === undefined)
-    return {
-      report: { percentage: 0, clones: [] },
-      files: [],
-      root: canonicalRoot,
-    };
-  const sourceFiles = await duplicationInputPaths(inspection, workspace);
-  if (sourceFiles.length === 0)
+  const sourceFiles =
+    workspace === undefined
+      ? []
+      : await duplicationInputPaths(inspection, workspace);
+  if (workspace === undefined || sourceFiles.length === 0)
     return {
       report: { percentage: 0, clones: [] },
       files: [],
@@ -184,7 +181,9 @@ async function collectSide(
       }
       let fallbackTokenHashes: ReadonlyMap<number, string> = new Map();
       if (missingFragments.length > 0) {
-        const registry = await captureSnapshotRegistry(canonicalRoot);
+        const registry = await captureSnapshotRegistry(canonicalRoot, [
+          ...new Set(missingFragments.map(({ location }) => location.file)),
+        ]);
         fallbackTokenHashes = await createFallbackTokenHashes(
           registry,
           missingFragments,
@@ -280,13 +279,11 @@ export const duplicationAdapter: ObservationCheckAdapter = {
         loadDuplicationSources(
           baselineRegistry,
           baselineFiles,
-          policy.settings,
           context.signal,
         ),
         loadDuplicationSources(
           targetRegistry,
           targetFiles,
-          policy.settings,
           context.signal,
         ),
       ]);
