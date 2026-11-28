@@ -57,10 +57,17 @@ export function canonicalCycle(nodes: readonly string[]): readonly string[] {
   const candidates = [
     ...rotations(withoutClosingNode),
     ...rotations([...withoutClosingNode].reverse()),
-  ].sort((left, right) =>
-    compareCodeUnits(JSON.stringify(left), JSON.stringify(right)),
-  );
-  return Object.freeze(candidates[0]!);
+  ];
+  let best = candidates[0]!;
+  let bestKey = JSON.stringify(best);
+  for (const candidate of candidates.slice(1)) {
+    const key = JSON.stringify(candidate);
+    if (compareCodeUnits(key, bestKey) < 0) {
+      best = candidate;
+      bestKey = key;
+    }
+  }
+  return Object.freeze(best);
 }
 
 function violationTarget(violation: IViolation, snapshotRoot: string): string {
