@@ -431,9 +431,11 @@ export async function runCli(
     .description("activate the reviewed tracked hooks using bundled tooling")
     .action(async () => {
       try {
-        await (
+        exitCode = await (
           await import("./hooks/install.js")
-        ).installTrackedHooks(process.cwd());
+        ).activateTrackedHooks(process.cwd(), (value) => {
+          process.stderr.write(value);
+        });
       } catch {
         process.stderr.write(
           "Zedbee could not activate tracked hooks safely.\n",

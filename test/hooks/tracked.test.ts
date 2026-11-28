@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { detectHookIntegration } from "../../src/hooks/detect.js";
-import { installTrackedHooks } from "../../src/hooks/install.js";
+import {
+  activateTrackedHooks,
+  installTrackedHooks,
+} from "../../src/hooks/install.js";
 import { createInitProposal } from "../../src/init/recommend.js";
 import { applyInitProposal } from "../../src/init/write-config.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
@@ -192,6 +195,20 @@ describe("stock Husky adoption", () => {
     expect(await repo.read(".husky/_/pre-commit")).toBe("#!/bin/sh\nexit 17\n");
     expect((await repo.git(["diff", "--cached", "--name-only"])).stdout).toBe(
       "",
+    );
+
+    await repo.git(["config", "--unset", "core.hooksPath"]);
+    const output = { value: "" };
+
+    expect(
+      await activateTrackedHooks(repo.root, (chunk) => {
+        output.value += chunk;
+      }),
+    ).toBe(2);
+    expect(output.value).toBe(
+      "Zedbee could not activate tracked hooks safely. " +
+        "Zedbee will not replace a customized Husky dispatcher. " +
+        "Use the existing hook installation command.\n",
     );
   });
 });
