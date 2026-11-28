@@ -15,6 +15,8 @@ import {
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
 import { capturedSourceRegistry } from "../../inspection/source-capture.js";
+import pLimit from "p-limit";
+import type { ChangedFile } from "../../git/change-set.js";
 
 export const MAX_SECRET_FILE_BYTES = 1024 * 1024;
 
@@ -128,6 +130,14 @@ async function readTextSource(
   return Object.freeze({ content, reportPath: repositoryPath, identityPath });
 }
 
+function baselinePathFor(
+  file: ChangedFile,
+  baselinePaths: ReadonlySet<string>,
+): string | undefined {
+  const path = file.previousPath ?? file.path;
+  return file.status === "added" || !baselinePaths.has(path) ? undefined : path;
+}
+
 export async function collectSecretSourcePairs(
   context: CheckRunContext,
 ): Promise<readonly SecretSourcePair[]> {
@@ -161,14 +171,9 @@ export async function collectSecretSourcePairs(
       paths.add(path);
     };
     add(context.targetInspection.snapshotRoot, file.path);
-    if (
-      file.status !== "added" &&
-      baselinePaths.has(file.previousPath ?? file.path)
-    )
-      add(
-        context.baselineInspection.snapshotRoot,
-        file.previousPath ?? file.path,
-      );
+    const baselinePath = baselinePathFor(file, baselinePaths);
+    if (baselinePath !== undefined)
+      add(context.baselineInspection.snapshotRoot, baselinePath);
   }
   const readSelected = async (
     root: string,
@@ -198,13 +203,15 @@ export async function collectSecretSourcePairs(
     }
     return readTextSource(registry, path, identity, true, binary);
   };
-  for (const file of changed) {
+  const readPair = async (
+    file: ChangedFile,
+  ): Promise<SecretSourcePair | undefined> => {
     const targetPath = normalizeRepositoryRelativePath(file.path);
+    const rawBaseline = baselinePathFor(file, baselinePaths);
     const baselinePath =
-      file.status === "added" ||
-      !baselinePaths.has(file.previousPath ?? file.path)
+      rawBaseline === undefined
         ? undefined
-        : normalizeRepositoryRelativePath(file.previousPath ?? file.path);
+        : normalizeRepositoryRelativePath(rawBaseline);
     const [baseline, target] = await Promise.all([
       baselinePath === undefined
         ? undefined
@@ -221,13 +228,19 @@ export async function collectSecretSourcePairs(
         targetBinaryPaths.has(targetPath),
       ),
     ]);
-    if (baseline === undefined && target === undefined) continue;
-    pairs.push(
-      Object.freeze({
-        ...(baseline === undefined ? {} : { baseline }),
-        ...(target === undefined ? {} : { target }),
-      }),
-    );
+    if (baseline === undefined && target === undefined) return undefined;
+    return Object.freeze({
+      ...(baseline === undefined ? {} : { baseline }),
+      ...(target === undefined ? {} : { target }),
+    });
+  };
+  const limit = pLimit(8);
+  const settled = await Promise.allSettled(
+    changed.map((file) => limit(() => readPair(file))),
+  );
+  for (const result of settled) {
+    if (result.status === "rejected") throw result.reason;
+    if (result.value !== undefined) pairs.push(result.value);
   }
   return Object.freeze(pairs);
 }
