@@ -120,11 +120,17 @@ function safeRequestError(
   );
 }
 
+export function osvRetryDelay(attempt: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 250 * 2 ** (attempt - 1));
+  });
+}
+
 export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? 15_000;
   const retries = options.retries ?? 2;
-  const retryDelay = options.retryDelay ?? (async () => Promise.resolve());
+  const retryDelay = options.retryDelay ?? osvRetryDelay;
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   const detailConcurrency = options.detailConcurrency ?? 4;
   const maxPages = options.maxPages ?? 10;
