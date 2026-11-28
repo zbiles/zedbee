@@ -3,7 +3,7 @@ import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import { readContainedFile } from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
-  IGNORED_DIRECTORY_NAMES,
+  hasIgnoredDirectorySegment,
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
 import type {
@@ -274,13 +274,7 @@ export async function loadSnapshotAliases(
         if (expanded.includes("\\") || /%(?:2e|2f|5c)/iu.test(expanded))
           throw new TypeError("Unsafe TypeScript alias target");
         const path = repositoryPath(resolve(base, expanded));
-        if (
-          path
-            .split("/")
-            .some((part) =>
-              (IGNORED_DIRECTORY_NAMES as readonly string[]).includes(part),
-            )
-        )
+        if (hasIgnoredDirectorySegment(path))
           throw new TypeError("TypeScript alias targets an excluded path");
         return path;
       });

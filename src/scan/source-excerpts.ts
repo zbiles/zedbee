@@ -7,7 +7,7 @@ import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { readContainedLines } from "../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
-  IGNORED_DIRECTORY_NAMES,
+  hasIgnoredDirectorySegment,
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
@@ -241,15 +241,7 @@ export async function enrichSourceExcerpts(
         if (
           registry
             .entries()
-            .some((entry) =>
-              entry.repositoryPath
-                .split("/")
-                .some((part) =>
-                  IGNORED_DIRECTORY_NAMES.includes(
-                    part as (typeof IGNORED_DIRECTORY_NAMES)[number],
-                  ),
-                ),
-            )
+            .some((entry) => hasIgnoredDirectorySegment(entry.repositoryPath))
         )
           return undefined;
         return readContainedLines(registry, path, [...lines], {

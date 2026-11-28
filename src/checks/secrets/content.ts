@@ -11,7 +11,7 @@ import {
 } from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
-  IGNORED_DIRECTORY_NAMES,
+  hasIgnoredDirectorySegment,
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
 import { capturedSourceRegistry } from "../../inspection/source-capture.js";
@@ -71,11 +71,7 @@ async function readTextSource(
   binary: boolean,
 ): Promise<SecretTextSource | undefined> {
   // A selected input is not permission to widen this consumer's inventory.
-  const excluded = repositoryPath
-    .split("/")
-    .some((part) =>
-      (IGNORED_DIRECTORY_NAMES as readonly string[]).includes(part),
-    );
+  const excluded = hasIgnoredDirectorySegment(repositoryPath);
   let entry;
   try {
     entry = excluded ? undefined : registry.resolve(repositoryPath);
