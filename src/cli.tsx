@@ -41,9 +41,7 @@ interface CommanderScanOptions {
   source: boolean;
   color: boolean;
   animations: boolean;
-  timeout?: string;
-  noTimeout: boolean;
-  signal?: AbortSignal;
+  timeout?: string | false;
   trustProjectPrettier: boolean;
 }
 
