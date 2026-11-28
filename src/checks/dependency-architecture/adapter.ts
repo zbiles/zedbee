@@ -316,7 +316,11 @@ async function collectSide(
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot) {
-    throw new Error("Dependency architecture analysis failed.");
+    throw new Error("Dependency architecture analysis failed.", {
+      cause: new Error(
+        "Snapshot root does not match the inspected repository root.",
+      ),
+    });
   }
   const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined) return Object.freeze([]);
@@ -370,12 +374,21 @@ async function collectSide(
   );
   signal.throwIfAborted();
   if (run.exitCode !== 0 && run.exitCode !== 1) {
-    throw new Error("Dependency architecture analysis failed.");
+    throw new Error("Dependency architecture analysis failed.", {
+      cause: new Error(`dependency-cruiser exited with code ${run.exitCode}.`),
+    });
   }
   const result = resultObject(run.output);
   validateContainedGraph(result);
-  if ((result.summary.environment.issues?.length ?? 0) > 0) {
-    throw new Error("Dependency architecture analysis failed.");
+  const issues = result.summary.environment.issues ?? [];
+  if (issues.length > 0) {
+    throw new Error("Dependency architecture analysis failed.", {
+      cause: new Error(
+        `dependency-cruiser reported environment issues: ${issues
+          .map(({ name }) => name)
+          .join(", ")}.`,
+      ),
+    });
   }
   const aliasConfigPath = aliases.workspaces.get(
     workspace.relativeRoot,
