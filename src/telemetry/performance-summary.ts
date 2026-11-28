@@ -18,11 +18,11 @@ export function summarizeScanPerformance(
         ? "0"
         : n === 1
           ? "1"
-          : n !== undefined && n <= 5
+          : n <= 5
             ? "2-5"
-            : n !== undefined && n <= 20
+            : n <= 20
               ? "6-20"
-              : n !== undefined && n <= 100
+              : n <= 100
                 ? "21-100"
                 : "101+";
   const reasons = new Map<
