@@ -192,49 +192,68 @@ function containedEntrypoint(
   return [...candidates].find((candidate) => sourceFiles.has(candidate));
 }
 
+function workspaceAliasEntries(
+  workspace: WorkspaceInspection,
+  name: string,
+  manifest: Record<string, unknown>,
+  snapshotRoot: string,
+): readonly (readonly [string, string])[] {
+  const entries: (readonly [string, string])[] = [];
+  const sourceFiles = new Set(workspace.sourceFiles);
+  const entrypoints = manifestEntrypoints(manifest);
+  const root =
+    workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
+  const rootFallbacks = [
+    ...ENTRY_EXTENSIONS.flatMap((extension) => [
+      `${root}src/index${extension}`,
+      `${root}src/main${extension}`,
+      `${root}index${extension}`,
+    ]),
+    ...(workspace.sourceFiles.length === 1 ? workspace.sourceFiles : []),
+  ];
+  for (const exportKey of [".", ...entrypoints.keys()].sort(compareCodeUnits)) {
+    const entry =
+      (entrypoints.get(exportKey) ?? [])
+        .filter((target): target is string => target !== null)
+        .map((target) => containedEntrypoint(workspace, sourceFiles, target))
+        .find((candidate) => candidate !== undefined) ??
+      (exportKey === "." && manifest.exports === undefined
+        ? rootFallbacks.find((candidate) => sourceFiles.has(candidate))
+        : undefined);
+    if (entry === undefined) continue;
+    const specifier =
+      exportKey === "." ? name : `${name}/${exportKey.slice(2)}`;
+    entries.push([`${specifier}$`, join(snapshotRoot, entry)]);
+  }
+  return entries;
+}
+
 async function workspaceAliases(
   inspection: RepositoryInspection,
   snapshotRoot: string,
   registry: SnapshotRegistry,
 ): Promise<Readonly<Record<string, string>>> {
+  const named = inspection.workspaces.flatMap((workspace) =>
+    workspace.name === undefined ? [] : [{ workspace, name: workspace.name }],
+  );
+  const loaded = await Promise.all(
+    named.map(async ({ workspace, name }) => ({
+      workspace,
+      name,
+      manifest: entrypointRecord(
+        await readJsonData(registry, workspace.manifestPath),
+      ),
+    })),
+  );
   const aliases: Record<string, string> = {};
-  for (const workspace of inspection.workspaces) {
-    if (workspace.name === undefined) continue;
-    const sourceFiles = new Set(workspace.sourceFiles);
-    const manifest = entrypointRecord(
-      await readJsonData(registry, workspace.manifestPath),
-    );
-    const entrypoints = manifestEntrypoints(manifest);
-    const root =
-      workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-    const rootFallbacks = [
-      ...ENTRY_EXTENSIONS.flatMap((extension) => [
-        `${root}src/index${extension}`,
-        `${root}src/main${extension}`,
-        `${root}index${extension}`,
-      ]),
-      ...(workspace.sourceFiles.length === 1 ? workspace.sourceFiles : []),
-    ];
-    for (const exportKey of [".", ...entrypoints.keys()].sort(
-      compareCodeUnits,
-    )) {
-      const entry =
-        (entrypoints.get(exportKey) ?? [])
-          .filter((target): target is string => target !== null)
-          .map((target) => containedEntrypoint(workspace, sourceFiles, target))
-          .find((candidate) => candidate !== undefined) ??
-        (exportKey === "." && manifest.exports === undefined
-          ? rootFallbacks.find((candidate) =>
-              sourceFiles.has(candidate),
-            )
-          : undefined);
-      if (entry === undefined) continue;
-      const specifier =
-        exportKey === "."
-          ? workspace.name
-          : `${workspace.name}/${exportKey.slice(2)}`;
-      aliases[`${specifier}$`] = join(snapshotRoot, entry);
-    }
+  for (const { workspace, name, manifest } of loaded) {
+    for (const [key, value] of workspaceAliasEntries(
+      workspace,
+      name,
+      manifest,
+      snapshotRoot,
+    ))
+      aliases[key] = value;
   }
   return aliases;
 }
