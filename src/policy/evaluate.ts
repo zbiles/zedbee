@@ -1,10 +1,9 @@
 import { isConfigurableRuleCheckId } from "../config/settings-registry.js";
 import {
-  CHECK_IDS,
-  type CheckId,
   type ResolvedCheckPolicy,
   type ResolvedConfig,
 } from "../config/schema.js";
+import { isCheckId } from "../core/check-ids.js";
 import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult, Finding, RunSummary } from "../core/types.js";
 import type { CheckExecutionResult } from "../checks/adapter.js";
@@ -57,8 +56,8 @@ export function displayResultForPolicy(
   }
   if (policy.severity === "off" && policyForFile === undefined)
     return undefined;
-  const checkId = CHECK_IDS.includes(sanitizedResult.checkId as CheckId)
-    ? (sanitizedResult.checkId as CheckId)
+  const checkId = isCheckId(sanitizedResult.checkId)
+    ? sanitizedResult.checkId
     : undefined;
   return {
     ...sanitizedResult,
