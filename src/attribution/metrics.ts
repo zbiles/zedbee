@@ -9,7 +9,6 @@ import type {
 import {
   findingIdentityFromSnapshot,
   fingerprintSnapshot,
-  isCanonicalSyntaxText,
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";

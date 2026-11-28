@@ -9,6 +9,7 @@ import type {
   CheckFixProvider,
 } from "./adapter.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
+import { isCanonicalText } from "../core/canonical-text.js";
 import { sanitizeCheckTarget } from "./sanitize-target.js";
 
 export type AdapterSnapshot =
@@ -32,12 +33,7 @@ type AdapterSnapshotResult =
   | Readonly<{ valid: false; id: string }>;
 
 function adapterId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.trim() !== value ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
+  if (!isCanonicalText(value)) {
     throw new TypeError("Adapter returned an invalid check id");
   }
   return displayLabel(value, "adapter check id");
