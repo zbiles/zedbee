@@ -78,6 +78,13 @@ export const SCAN_WORKER_COUNTS = [1, 2, 4] as const;
 const active = new AsyncLocalStorage<ScanPerformanceRecorder>();
 const bounded = (v: number) =>
   Math.min(MAX_DIAGNOSTIC_DURATION_MS, Math.max(0, Math.round(v)));
+const CACHE_COUNTER_FIELDS: Partial<
+  Record<PerformanceKind, "cache_hits" | "cache_misses" | "cache_bypasses">
+> = {
+  cache_hit: "cache_hits",
+  cache_miss: "cache_misses",
+  cache_bypass: "cache_bypasses",
+};
 export class ScanPerformanceRecorder {
   private readonly checks = new Map<string, CheckPerformance>();
   private partial = false;
@@ -154,16 +161,10 @@ export class ScanPerformanceRecorder {
         max = `${sample.kind}_max_ms` as const;
       row[sum] = bounded((row[sum] ?? 0) + ms);
       row[max] = Math.max(row[max] ?? 0, ms);
-    } else if (
-      ["cache_hit", "cache_miss", "cache_bypass"].includes(sample.kind)
-    ) {
-      const key =
-        sample.kind === "cache_hit"
-          ? "cache_hits"
-          : sample.kind === "cache_miss"
-            ? "cache_misses"
-            : "cache_bypasses";
-      row[key] = Math.min(MAX_DIAGNOSTIC_COUNT, row[key] + 1);
+    } else {
+      const key = CACHE_COUNTER_FIELDS[sample.kind];
+      if (key !== undefined)
+        row[key] = Math.min(MAX_DIAGNOSTIC_COUNT, row[key] + 1);
     }
   }
   snapshot(): ScanPerformanceSummary {
