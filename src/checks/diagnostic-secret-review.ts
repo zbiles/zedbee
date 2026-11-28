@@ -19,7 +19,7 @@ export async function detectDiagnosticSecrets(
 export function diagnosticCredentialValues(source: string): string[] {
   return Array.from(
     source.matchAll(
-      /(?:secret|password|token|credential|api[_-]?key|access[_-]?key)[\w-]*["']?\s*[:=]\s*["']([^"'\r\n]+)["']/giu,
+      /(?:secret|password|token|credential|api[_-]?key|access[_-]?key)[\w-]{0,64}["']?\s*[:=]\s*["']([^"'\r\n]+)["']/giu,
     ),
     (match) => match[1]!,
   ).filter(Boolean);
