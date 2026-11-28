@@ -1,4 +1,5 @@
 import { canonicalText } from "../core/canonical-text.js";
+import { compareCodeUnits } from "../core/compare.js";
 import type {
   Attribution,
   ChangedEntity,
@@ -286,19 +287,14 @@ function attributePreparedMetricDelta(
     );
   }
 
-  const evidence = [
-    ...(baselineValue === undefined ? [] : [`baseline-value:${baselineValue}`]),
-    `entity:${targetSnapshot.identity}`,
-    `limit:${policySnapshot.limit}`,
-    `reason:${
-      targetOnlyAboveLimit
-        ? "target-only-above-limit"
-        : crossesLimit
-          ? "limit-crossing"
-          : "worsening-above-limit"
-    }`,
-    `target-value:${targetValue}`,
-  ].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  const evidence = metricDeltaEvidence(
+    targetSnapshot.identity,
+    policySnapshot.limit,
+    baselineValue,
+    targetValue,
+    targetOnlyAboveLimit,
+    crossesLimit,
+  );
   return toFinding(
     targetSnapshot,
     Object.freeze({
@@ -309,4 +305,26 @@ function attributePreparedMetricDelta(
     policySnapshot,
     baselineSnapshot,
   );
+}
+
+function metricDeltaEvidence(
+  identity: string,
+  limit: number,
+  baselineValue: number | undefined,
+  targetValue: number,
+  targetOnlyAboveLimit: boolean,
+  crossesLimit: boolean,
+): string[] {
+  const reason = targetOnlyAboveLimit
+    ? "target-only-above-limit"
+    : crossesLimit
+      ? "limit-crossing"
+      : "worsening-above-limit";
+  return [
+    ...(baselineValue === undefined ? [] : [`baseline-value:${baselineValue}`]),
+    `entity:${identity}`,
+    `limit:${limit}`,
+    `reason:${reason}`,
+    `target-value:${targetValue}`,
+  ].sort(compareCodeUnits);
 }
