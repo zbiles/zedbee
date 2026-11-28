@@ -5,6 +5,7 @@ import {
   URL_SCHEME,
 } from "../project/import-specifier.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
+import { owningWorkspace } from "../../inspection/workspace-owner.js";
 import {
   prepareSnapshotAliases,
   normalizedAliasSpecifier,
@@ -390,9 +391,6 @@ async function collectSide(
   const aliasConfigPath = aliases.workspaces.get(
     workspace.relativeRoot,
   )?.configPath;
-  const aliasScopes = [...inspection.workspaces].sort((left, right) =>
-    compareScopeRoots(left.relativeRoot, right.relativeRoot),
-  );
   return normalizeDependencyViolations(
     result,
     canonicalRoot,
@@ -409,10 +407,8 @@ async function collectSide(
           .filter(([, targets]) =>
             targets.some(
               (path) =>
-                aliasScopes.find(
-                  ({ relativeRoot }) =>
-                    relativeRoot === "." || path.startsWith(`${relativeRoot}/`),
-                )?.relativeRoot === workspace.relativeRoot,
+                owningWorkspace(inspection.workspaces, path)?.relativeRoot ===
+                workspace.relativeRoot,
             ),
           )
           .map(([specifier]) => specifier),
