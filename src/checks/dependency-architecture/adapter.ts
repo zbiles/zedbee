@@ -44,16 +44,6 @@ import { COMPILER_SOURCE } from "../compiler-paths.js";
 const GENERATED = "(^|/)(?:node_modules|dist|build|coverage|vendor)(?:/|$)";
 const UNSAFE_RESOLUTION = "^(?:\\.\\.(?:/|$)|/|[A-Za-z]:[/\\\\])";
 
-function selectedTsconfig(workspace: WorkspaceInspection): string | undefined {
-  const sorted = [...workspace.tsconfigPaths].sort(
-    (left, right) =>
-      Number(right.endsWith("/tsconfig.json") || right === "tsconfig.json") -
-        Number(left.endsWith("/tsconfig.json") || left === "tsconfig.json") ||
-      compareCodeUnits(left, right),
-  );
-  return sorted[0];
-}
-
 function validateSpecifier(sourcePath: string, specifier: string): void {
   if (!isContainedImportSpecifier(sourcePath, specifier))
     throw new TypeError("Dependency import escaped the snapshot");
@@ -349,9 +339,8 @@ async function collectSide(
     },
   );
   validateContainedImports(registry, specifiers);
-  const tsconfig = selectedTsconfig(workspace);
   const programInput =
-    tsconfig === undefined
+    workspace.tsconfigPaths.length === 0
       ? undefined
       : await loadSnapshotProgramInput(canonicalRoot, canonicalRoot, workspace);
   const run = await cruise(
