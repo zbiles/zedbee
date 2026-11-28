@@ -4,6 +4,7 @@ import { realpath } from "node:fs/promises";
 import { GitClient } from "../git/client.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
+import { owningWorkspace } from "../inspection/workspace-owner.js";
 import { projectInstallManager } from "../init/install-project.js";
 import { terminalText } from "../renderers/terminal-style.js";
 import {
@@ -85,16 +86,9 @@ export async function updateCommand(cwd: string): Promise<string> {
         .join("/") || ".";
     if (isAbsolute(location) || location === ".." || location.startsWith("../"))
       throw new Error("outside checkout");
-    const ancestors = declared
-      .filter(
-        ({ relativeRoot }) =>
-          relativeRoot === "." ||
-          location === relativeRoot ||
-          location.startsWith(`${relativeRoot}/`),
-      )
-      .sort((a, b) => b.relativeRoot.length - a.relativeRoot.length);
     const project =
-      ancestors[0] ?? (declared.length === 1 ? declared[0] : undefined);
+      owningWorkspace(declared, `${location}/`) ??
+      (declared.length === 1 ? declared[0] : undefined);
     if (project === undefined) {
       return declared.length === 0
         ? "Update your existing installation of zedbee using the package manager that installed it (no declared project dependency found)."

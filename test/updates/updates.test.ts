@@ -337,3 +337,28 @@ it("identifies nested pnpm declaration from repository root and subdirectories",
     'directory "nested": pnpm add --save-dev zedbee@latest',
   );
 });
+
+it("recommends the deepest project, not the repository root", async () => {
+  const repo = await createGitRepository();
+  await repo.write(
+    "package.json",
+    JSON.stringify({
+      name: "root",
+      packageManager: "pnpm@10.0.0",
+      devDependencies: { zedbee: "^0.1.42" },
+      workspaces: ["a"],
+    }),
+  );
+  await repo.write(
+    "a/package.json",
+    JSON.stringify({
+      name: "a",
+      devDependencies: { zedbee: "^0.1.42" },
+    }),
+  );
+  await repo.write("pnpm-workspace.yaml", "packages: ['a']\n");
+  await repo.write("a/src/index.ts", "export {};\n");
+  expect(await updateCommand(join(repo.root, "a", "src"))).toContain(
+    'directory "a": pnpm add --save-dev zedbee@latest',
+  );
+});
