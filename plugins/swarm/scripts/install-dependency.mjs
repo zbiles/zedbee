@@ -25,6 +25,7 @@ import {
 import { pathToFileURL } from "node:url";
 
 const MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 function validate(manager, packageSpec) {
   if (
     !MANAGERS.has(manager) ||
@@ -252,8 +253,9 @@ async function execute(command, args, options) {
       [child.stderr, stderr],
     ]) {
       stream.on("data", (chunk) => {
+        if (failure !== undefined) return;
         bytes += chunk.length;
-        if (bytes > 16 * 1024 * 1024)
+        if (bytes > MAX_OUTPUT_BYTES)
           stop(
             new Error(
               "Package manager output exceeded the installation limit.",
@@ -358,7 +360,7 @@ export async function installDependency(
       cancelSignal: signal,
       killDescendants: true,
       timeout: 300_000,
-      maxBuffer: 16 * 1024 * 1024,
+      maxBuffer: MAX_OUTPUT_BYTES,
       stdin: "ignore",
       reject: false,
     },
