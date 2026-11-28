@@ -68,7 +68,6 @@ async function readTextSource(
   registry: SnapshotRegistry,
   repositoryPath: string,
   identityPath: string,
-  required: boolean,
   binary: boolean,
 ): Promise<SecretTextSource | undefined> {
   // A selected input is not permission to widen this consumer's inventory.
@@ -84,7 +83,6 @@ async function readTextSource(
     throw unsafeSecretFile(repositoryPath);
   }
   if (entry === undefined) {
-    if (!required) return undefined;
     throw new SecretContentError({
       code: "SECRET_FILE_UNSAFE",
       message: "A changed file could not be read from the required snapshot.",
@@ -201,7 +199,7 @@ export async function collectSecretSourcePairs(
       }
       registry = await pending;
     }
-    return readTextSource(registry, path, identity, true, binary);
+    return readTextSource(registry, path, identity, binary);
   };
   const readPair = async (
     file: ChangedFile,
